@@ -46,7 +46,7 @@ export function isProviderStatusFresh(
   snapshot: ProviderStatusSnapshot | undefined,
   maxAgeMs: number,
 ): snapshot is ProviderStatusSnapshot {
-  if (!snapshot) return false;
+  if (!snapshot || maxAgeMs <= 0) return false;
   const fetchedAt = Date.parse(snapshot.fetchedAt);
   if (!Number.isFinite(fetchedAt)) return false;
   const age = Date.now() - fetchedAt;

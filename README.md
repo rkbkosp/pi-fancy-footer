@@ -158,7 +158,7 @@ Top-level settings:
   (`text` | `accent` | `muted` | `dim` | `success` | `error` | `warning`)
 - `providerStatus`:
   - `refreshMs` - provider status refresh interval in milliseconds
-  - `cacheTtlMs` - cache freshness window in milliseconds
+  - `cacheTtlMs` - cache freshness window in milliseconds; `0` disables fresh-cache reuse
   - `providers` - supported provider adapters (`openai-codex`, `anthropic`)
   - `display` - render quota windows as a mini `gauge` (default) or plain
     `text`
