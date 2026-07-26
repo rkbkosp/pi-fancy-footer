@@ -43,12 +43,19 @@ import {
   collectProviderStatus,
   updateProviderStatusFromHeaders,
 } from "./provider-status.ts";
+import {
+  debugProviderStatusSource,
+  listProviderStatusSources,
+  testProviderStatusSource,
+} from "./provider-status/diagnostics.ts";
+import { redactSensitiveText } from "./provider-status/redact.ts";
 
 interface ActiveFooterControls {
   requestRender: () => void;
   reschedule: () => void;
   rescheduleProviderStatus: () => void;
   refreshProviderStatus: (force?: boolean) => void;
+  replaceProviderStatuses: (statuses: ProviderStatusSnapshot[]) => void;
   updateProviderStatus: (status: ProviderStatusSnapshot) => void;
 }
 
@@ -327,6 +334,13 @@ export default function (pi: ExtensionAPI) {
         refreshProviderStatus: (force = false) => {
           void refreshProviderStatus(force);
         },
+        replaceProviderStatuses: (statuses) => {
+          if (!isActiveFooter()) return;
+          providerStatuses = new Map(
+            statuses.map((snapshot) => [snapshot.provider, snapshot]),
+          );
+          requestRender();
+        },
         updateProviderStatus: (status) => {
           if (!isActiveFooter()) return;
           providerStatuses.set(status.provider, status);
@@ -372,10 +386,81 @@ export default function (pi: ExtensionAPI) {
   };
 
   pi.registerCommand("fancy-footer", {
-    description: "Configure the fancy footer.",
-    handler: async (_args, ctx) => {
-      const configPath = getFooterConfigPath();
+    description: "Configure the footer or inspect provider status.",
+    handler: async (args, ctx) => {
+      const parts = args.trim().split(/\s+/).filter(Boolean);
+      if (parts[0] === "provider") {
+        const action = parts[1] ?? "list";
+        const providerId = parts[2];
+        footerConfig = loadFooterConfig();
+        try {
+          if (action === "list" && !providerId) {
+            ctx.ui.notify(
+              listProviderStatusSources(
+                footerConfig.providerStatus,
+                ctx.model,
+              ).join("\n"),
+              "info",
+            );
+            return;
+          }
+          if (action === "refresh" && parts.length <= 3) {
+            const statuses = await collectProviderStatus(
+              pi,
+              footerConfig.providerStatus,
+              ctx.model,
+              { providerId, force: true, signal: ctx.signal },
+            );
+            if (providerId && statuses.length === 0) {
+              throw new Error(`Unknown or disabled provider: ${providerId}`);
+            }
+            if (providerId) {
+              for (const status of statuses) {
+                activeFooterControls?.updateProviderStatus(status);
+              }
+            } else {
+              activeFooterControls?.replaceProviderStatuses(statuses);
+            }
+            ctx.ui.notify(
+              providerId
+                ? `Refreshed provider ${providerId}`
+                : `Refreshed ${statuses.length} provider status source(s)`,
+              "info",
+            );
+            return;
+          }
+          if (action === "test" && providerId && parts.length === 3) {
+            const lines = await testProviderStatusSource(
+              pi,
+              footerConfig.providerStatus,
+              providerId,
+              ctx.signal,
+            );
+            ctx.ui.notify(lines.join("\n"), "info");
+            return;
+          }
+          if (action === "debug" && providerId && parts.length === 3) {
+            const lines = await debugProviderStatusSource(
+              footerConfig.providerStatus,
+              providerId,
+            );
+            ctx.ui.notify(lines.join("\n"), "info");
+            return;
+          }
+          ctx.ui.notify(
+            "Usage: /fancy-footer provider list|refresh [provider]|test <provider>|debug <provider>",
+            "warning",
+          );
+        } catch (error) {
+          const message = redactSensitiveText(
+            error instanceof Error ? error.message : String(error),
+          );
+          ctx.ui.notify(`Provider command failed: ${message}`, "error");
+        }
+        return;
+      }
 
+      const configPath = getFooterConfigPath();
       if (!ctx.hasUI) {
         ctx.ui.notify("/fancy-footer requires interactive UI mode", "warning");
         return;

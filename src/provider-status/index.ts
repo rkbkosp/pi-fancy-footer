@@ -244,14 +244,27 @@ export function buildProviderStatusGauge(
   });
 }
 
+export interface CollectProviderStatusOptions {
+  providerId?: string;
+  force?: boolean;
+  signal?: AbortSignal;
+}
+
 export async function collectProviderStatus(
   pi: ExtensionAPI,
   config: ProviderStatusConfigSnapshot,
   model?: ModelLike | string,
+  options: CollectProviderStatusOptions = {},
 ): Promise<ProviderStatusSnapshot[]> {
+  const registry = createProviderStatusRegistry(config.customProviders);
+  const sources = options.providerId
+    ? [registry.get(options.providerId)].filter(
+        (source): source is ProviderStatusSource => source !== undefined,
+      )
+    : enabledProviderStatusSources(config, model);
   return Promise.all(
-    enabledProviderStatusSources(config, model).map((source) =>
-      collectProviderStatusFromSource(pi, source, config),
+    sources.map((source) =>
+      collectProviderStatusFromSource(pi, source, config, options),
     ),
   );
 }
@@ -265,12 +278,18 @@ async function collectProviderStatusFromSource(
   pi: ExtensionAPI,
   source: ProviderStatusSource,
   config: ProviderStatusConfigSnapshot,
+  options: CollectProviderStatusOptions,
 ): Promise<ProviderStatusSnapshot> {
   const flightKey = source.cacheKey ?? source.id;
   const active = providerStatusFlights.get(flightKey);
   if (active) return active;
 
-  const flight = collectProviderStatusFromSourceOnce(pi, source, config);
+  const flight = collectProviderStatusFromSourceOnce(
+    pi,
+    source,
+    config,
+    options,
+  );
   providerStatusFlights.set(flightKey, flight);
   try {
     return await flight;
@@ -285,10 +304,11 @@ async function collectProviderStatusFromSourceOnce(
   pi: ExtensionAPI,
   source: ProviderStatusSource,
   config: ProviderStatusConfigSnapshot,
+  options: CollectProviderStatusOptions,
 ): Promise<ProviderStatusSnapshot> {
   const cacheKey = source.cacheKey ?? source.id;
   const cached = await readProviderStatusCache(cacheKey);
-  if (isProviderStatusFresh(cached, config.cacheTtlMs)) {
+  if (!options.force && isProviderStatusFresh(cached, config.cacheTtlMs)) {
     return { ...cached, source: "cache" };
   }
 
@@ -297,7 +317,7 @@ async function collectProviderStatusFromSourceOnce(
     // Codex refreshes are authoritative: OpenAI can remove a window and promote
     // the weekly window to primary, so retaining a missing window would show a
     // stale or duplicated quota.
-    const fresh = await source.fetch(pi);
+    const fresh = await source.fetch(pi, { signal: options.signal });
     const merged = source.preserveMissingWindows
       ? mergeProviderStatus(displayableCachedStatus(cached), fresh)
       : fresh;

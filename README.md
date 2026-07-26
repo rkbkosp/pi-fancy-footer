@@ -64,6 +64,10 @@ pi install npm:pi-fancy-footer
   - arrow down past the widgets to reach the General settings (refresh,
     icon family, gauge style/width/colors, default colors); Enter/Space
     cycles values
+- `/fancy-footer provider list` - list built-in and declarative status sources
+- `/fancy-footer provider refresh [provider]` - bypass the TTL cache and refresh all matched sources or one provider
+- `/fancy-footer provider test <provider>` - make a real request and report HTTP, latency, selector, and normalized-result diagnostics
+- `/fancy-footer provider debug <provider>` - show redacted source, cache, endpoint-host, and snapshot diagnostics
 
 ## ⚙️ Configuration
 
@@ -353,26 +357,26 @@ leading widget icon.
 
 <!-- markdownlint-disable MD013 MD060 -->
 
-| Widget                        | nerd    | emoji      | unicode | ascii    |
-| ----------------------------- | ------- | ---------- | ------- | -------- |
-| `context-bar`                 | `󰾆`     | `🔋`       | `◧`     | `\|`     |
-| `context-capacity`            | ``     | `💾`       | `□`     | `[]`     |
-| `provider-status`             | `󰓅`     | `📊`       | `%`     | `%`      |
-| `cache-read`                  | `󰇚`     | `📥`       | `↧`     | `R`      |
-| `cache-write`                 | `󰕒`     | `📤`       | `↥`     | `W`      |
-| `cache-hit-rate`              | `󰀚`     | `🎯`       | `◎`     | `H`      |
-| `total-cost`                  | `󰇁`     | `💲`       | `$`     | `$`      |
-| `location`                    | ``     | `📁`       | `⌂`     | `/`      |
-| `branch`                      | ``     | `🌿`       | `⎇`     | `*`      |
-| `commit`                      | ``     | `🔖`       | `#`     | `#`      |
-| `pull-request`                | ``     | `🔀`       | `⇄`     | `@`      |
-| `pull-request-review-threads` | `󰅺`     | `💬`       | `✎`     | `!`      |
-| `pull-request-ci-status`      | `//` | `⏳/❌/✅` | `◷/✕/✓` | `~/x/+`  |
-| `diff-added`                  | `↗`     | `➕`       | `+`     | `+`      |
-| `diff-removed`                | `↘`     | `➖`       | `−`     | `-`      |
+| Widget                        | nerd    | emoji      | unicode  | ascii    |
+| ----------------------------- | ------- | ---------- | -------- | -------- |
+| `context-bar`                 | `󰾆`     | `🔋`       | `◧`      | `\|`     |
+| `context-capacity`            | ``     | `💾`       | `□`      | `[]`     |
+| `provider-status`             | `󰓅`     | `📊`       | `%`      | `%`      |
+| `cache-read`                  | `󰇚`     | `📥`       | `↧`      | `R`      |
+| `cache-write`                 | `󰕒`     | `📤`       | `↥`      | `W`      |
+| `cache-hit-rate`              | `󰀚`     | `🎯`       | `◎`      | `H`      |
+| `total-cost`                  | `󰇁`     | `💲`       | `$`      | `$`      |
+| `location`                    | ``     | `📁`       | `⌂`      | `/`      |
+| `branch`                      | ``     | `🌿`       | `⎇`      | `*`      |
+| `commit`                      | ``     | `🔖`       | `#`      | `#`      |
+| `pull-request`                | ``     | `🔀`       | `⇄`      | `@`      |
+| `pull-request-review-threads` | `󰅺`     | `💬`       | `✎`      | `!`      |
+| `pull-request-ci-status`      | `//` | `⏳/❌/✅` | `◷/✕/✓`  | `~/x/+`  |
+| `diff-added`                  | `↗`    | `➕`       | `+`      | `+`      |
+| `diff-removed`                | `↘`    | `➖`       | `−`      | `-`      |
 | `git-status`                  | `//` | `🔼/🔽/🔀` | `↑/↓/↕` | `^/_/<>` |
-| `model`                       | `󰚩`     | `🤖`       | `◉`     | `%`      |
-| `thinking`                    | `󰧑`     | `🧠`       | `✦`     | `?`      |
+| `model`                       | `󰚩`     | `🤖`       | `◉`      | `%`      |
+| `thinking`                    | `󰧑`     | `🧠`       | `✦`      | `?`      |
 
 <!-- markdownlint-enable MD013 MD060 -->
 
