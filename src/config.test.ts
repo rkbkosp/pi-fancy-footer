@@ -21,6 +21,21 @@ test("footerConfigValidationErrors accepts a valid config", () => {
   );
 });
 
+test("footerConfigValidationErrors accepts remote pricing configuration", () => {
+  assert.deepEqual(
+    footerConfigValidationErrors({
+      pricing: {
+        mode: "estimate-only",
+        request: { url: "https://api.example.com/prices" },
+        modelsSelector: "data.models",
+        fields: { id: "name", input: "input", output: "output" },
+        unit: "per_million_tokens",
+      },
+    }),
+    [],
+  );
+});
+
 test("footerConfigValidationErrors names unknown keys with rename hints", () => {
   const errors = footerConfigValidationErrors({ contextBarStyle: "blocks" });
   assert.deepEqual(errors, [

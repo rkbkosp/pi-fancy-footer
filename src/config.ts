@@ -146,6 +146,36 @@ const declarativeProviderSchema = Type.Object(
   { additionalProperties: false },
 );
 
+const pricingFieldsSchema = Type.Object(
+  {
+    id: Type.String({ minLength: 1 }),
+    input: Type.Optional(Type.String({ minLength: 1 })),
+    output: Type.Optional(Type.String({ minLength: 1 })),
+    cacheRead: Type.Optional(Type.String({ minLength: 1 })),
+    cacheWrite: Type.Optional(Type.String({ minLength: 1 })),
+  },
+  { additionalProperties: false },
+);
+
+const pricingConfigSchema = Type.Object(
+  {
+    mode: literalUnion(["estimate-only", "register-provider"]),
+    request: declarativeRequestSchema,
+    modelsSelector: Type.String({ minLength: 1 }),
+    fields: pricingFieldsSchema,
+    transform: Type.Optional(numericTransformSchema),
+    currency: Type.Optional(Type.String({ minLength: 1 })),
+    unit: Type.Optional(literalUnion(["per_token", "per_million_tokens"])),
+    refreshMs: Type.Optional(
+      Type.Integer({ minimum: 60_000, maximum: 7 * 24 * 60 * 60 * 1000 }),
+    ),
+    cacheTtlMs: Type.Optional(
+      Type.Integer({ minimum: 0, maximum: 30 * 24 * 60 * 60 * 1000 }),
+    ),
+  },
+  { additionalProperties: false },
+);
+
 const providerStatusConfigSchema = Type.Object(
   {
     refreshMs: Type.Optional(
@@ -219,6 +249,7 @@ const footerConfigFileSchema = Type.Object(
     defaultTextColor: Type.Optional(footerWidgetColorSchema),
     defaultIconColor: Type.Optional(footerWidgetColorSchema),
     providerStatus: Type.Optional(providerStatusConfigSchema),
+    pricing: Type.Optional(pricingConfigSchema),
     widgets: Type.Optional(
       Type.Object(
         Object.fromEntries(
@@ -323,6 +354,9 @@ function knownKeysAt(path: string): readonly string[] {
   if (path === "") return Object.keys(footerConfigFileSchema.properties);
   if (path === "/providerStatus") {
     return Object.keys(providerStatusConfigSchema.properties);
+  }
+  if (path === "/pricing") {
+    return Object.keys(pricingConfigSchema.properties);
   }
   if (path === "/gaugeColors") return Object.keys(DEFAULT_GAUGE_COLORS);
   if (path === "/widgets") return FOOTER_WIDGET_IDS;
@@ -438,6 +472,7 @@ function parseFooterConfig(
     defaultIconColor:
       input.defaultIconColor ?? DEFAULT_FOOTER_CONFIG.defaultIconColor,
     providerStatus: parseProviderStatusConfig(input.providerStatus),
+    ...(input.pricing ? { pricing: structuredClone(input.pricing) } : {}),
     widgets: pruneWidgetOverrides(
       input.widgets as Record<string, FooterWidgetConfigOverride> | undefined,
     ) as Partial<Record<BuiltInFooterWidgetId, FooterWidgetConfigOverride>>,
@@ -576,6 +611,7 @@ function toFooterConfigObject(
     out.providerStatus = structuredClone(config.providerStatus);
   }
 
+  if (config.pricing) out.pricing = structuredClone(config.pricing);
   if (Object.keys(widgets).length > 0) out.widgets = widgets;
   if (Object.keys(extensionWidgets).length > 0) {
     out.extensionWidgets = extensionWidgets;

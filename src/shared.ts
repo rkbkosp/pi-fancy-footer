@@ -4,6 +4,7 @@ import type {
   DeclarativeProviderConfig,
   ProviderStatusSnapshot,
 } from "./provider-status/types.ts";
+import type { PricingConfig } from "./pricing/types.ts";
 
 export type ThinkingLevel = ModelThinkingLevel;
 
@@ -259,6 +260,7 @@ export interface UsageSnapshot {
 export interface SessionUsageMetrics {
   latest: UsageSnapshot | undefined;
   totalCost: number;
+  totalCostApproximate?: boolean;
   totalCacheRead: number;
   totalCacheWrite: number;
 }
@@ -402,6 +404,7 @@ export interface FooterMetrics {
   totalTokens: number;
   usedTokensForBar: number;
   totalCost: number;
+  totalCostApproximate?: boolean;
   totalCacheRead: number;
   totalCacheWrite: number;
   cacheHitRatePercent: number | undefined;
@@ -490,6 +493,7 @@ export interface FooterConfigSnapshot {
   defaultTextColor: FooterWidgetColor;
   defaultIconColor: FooterWidgetColor;
   providerStatus: ProviderStatusConfigSnapshot;
+  pricing?: PricingConfig;
   widgets: Partial<Record<BuiltInFooterWidgetId, FooterWidgetConfigOverride>>;
   extensionWidgets: Record<string, FooterWidgetConfigOverride>;
 }

@@ -210,6 +210,40 @@ Selectors support object paths and array indexes, for example `data.quota` and `
 
 Requests support `GET` and JSON `POST` bodies. `$ENV_VAR` and `${ENV_VAR}` references are resolved in URLs, headers, and body strings. Missing variables are configuration errors. Responses must be JSON, are limited to 1 MiB by default, and time out after 5 seconds by default. Redirects are disabled unless explicitly enabled; authorization and cookie headers are removed when a redirect changes hosts. Raw responses and request credentials are never cached.
 
+### Remote model pricing
+
+Estimate-only pricing reads model rates from a separate JSON API and recalculates the current session cost without changing Pi's provider definitions. Estimated totals use an `≈` marker and do not rewrite historical session messages or `~/.pi/agent/models.json`.
+
+```json
+{
+  "pricing": {
+    "mode": "estimate-only",
+    "request": {
+      "url": "https://api.example.com/v1/prices",
+      "headers": {
+        "Authorization": "Bearer $PRICING_API_KEY"
+      }
+    },
+    "modelsSelector": "data.models",
+    "fields": {
+      "id": "name",
+      "input": "input_price",
+      "output": "output_price",
+      "cacheRead": "cache_read_price",
+      "cacheWrite": "cache_write_price"
+    },
+    "currency": "USD",
+    "unit": "per_million_tokens",
+    "refreshMs": 43200000,
+    "cacheTtlMs": 86400000
+  }
+}
+```
+
+`modelsSelector` must select an array. Field selectors are evaluated relative to each array item. Set `unit` to `per_token` when the API returns per-token rates; values are normalized to Pi's per-million-token convention. The optional numeric `transform` uses the same scale/offset/invert/clamp/round pipeline as provider resources.
+
+Pricing has its own low-frequency cache and refresh timer. A network or parsing failure falls back to the pricing disk cache and never prevents Pi from starting. Balance and quota refreshes continue independently.
+
 Supported per-widget overrides for both `widgets` and `extensionWidgets`:
 
 - `enabled` (boolean)

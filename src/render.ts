@@ -499,7 +499,13 @@ function computeFooterMetrics(
   usageMetrics: SessionUsageMetrics,
   iconFamily: FooterIconFamily,
 ): FooterMetrics {
-  const { latest, totalCost, totalCacheRead, totalCacheWrite } = usageMetrics;
+  const {
+    latest,
+    totalCost,
+    totalCostApproximate,
+    totalCacheRead,
+    totalCacheWrite,
+  } = usageMetrics;
 
   const contextUsage = ctx.getContextUsage();
   const totalTokens = Math.max(
@@ -570,6 +576,7 @@ function computeFooterMetrics(
     totalTokens,
     usedTokensForBar,
     totalCost,
+    ...(totalCostApproximate ? { totalCostApproximate: true } : {}),
     totalCacheRead,
     totalCacheWrite,
     cacheHitRatePercent,
@@ -666,7 +673,8 @@ function buildFooterWidgets(
     {
       ...baseWidgetDefaults("total-cost", iconFamily),
       visible: ({ width, metrics }) => width >= 60 && metrics.totalCost > 0,
-      renderText: ({ metrics }) => metrics.totalCost.toFixed(2),
+      renderText: ({ metrics }) =>
+        `${metrics.totalCostApproximate ? "≈" : ""}${metrics.totalCost.toFixed(2)}`,
     },
     {
       ...baseWidgetDefaults("cache-read", iconFamily),

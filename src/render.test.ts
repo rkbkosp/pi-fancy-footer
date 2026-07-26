@@ -119,6 +119,20 @@ function contextWithModel(
   };
 }
 
+test("renderFooterLines marks estimate-only session cost as approximate", () => {
+  const lines = renderFooterLines(
+    120,
+    contextWithModel({ id: "model-a", name: "Model A" }) as never,
+    EMPTY_GIT_INFO,
+    "off",
+    theme as never,
+    { ...usageMetrics, totalCost: 3.53, totalCostApproximate: true },
+    footerConfig,
+  );
+
+  assert.match(lines.join("\n"), /\$≈3\.53/);
+});
+
 test("renderFooterLines renders max thinking with the default text color", () => {
   const colors: string[] = [];
   const coloredTheme = {
@@ -341,9 +355,7 @@ test("renderFooterLines reuses native gauges for declarative providers", () => {
         usedPercent: 27,
       },
     ],
-    balances: [
-      { id: "remaining", value: 84.26, currency: "CNY" },
-    ],
+    balances: [{ id: "remaining", value: 84.26, currency: "CNY" }],
   };
   const gaugeConfig: FooterConfigSnapshot = {
     ...footerConfig,

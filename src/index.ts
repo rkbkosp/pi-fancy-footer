@@ -49,12 +49,20 @@ import {
   testProviderStatusSource,
 } from "./provider-status/diagnostics.ts";
 import { redactSensitiveText } from "./provider-status/redact.ts";
+import {
+  DEFAULT_PRICING_REFRESH_MS,
+  estimateSessionCost,
+  loadPricingCatalog,
+  type PricingCatalog,
+} from "./pricing/index.ts";
 
 interface ActiveFooterControls {
   requestRender: () => void;
   reschedule: () => void;
   rescheduleProviderStatus: () => void;
+  reschedulePricing: () => void;
   refreshProviderStatus: (force?: boolean) => void;
+  refreshUsage: () => void;
   replaceProviderStatuses: (statuses: ProviderStatusSnapshot[]) => void;
   updateProviderStatus: (status: ProviderStatusSnapshot) => void;
 }
@@ -124,7 +132,27 @@ export default function (pi: ExtensionAPI) {
       const fallbackThinkingLevel = pi.getThinkingLevel();
       let currentGit = { ...EMPTY_GIT_INFO };
       let providerStatuses = new Map<string, ProviderStatusSnapshot>();
-      let usageMetrics: SessionUsageMetrics = collectSessionUsageMetrics(ctx);
+      let pricingCatalog: PricingCatalog | undefined;
+      const collectUsage = (): SessionUsageMetrics => {
+        const metrics = collectSessionUsageMetrics(ctx);
+        if (footerConfig.pricing?.mode !== "estimate-only" || !pricingCatalog) {
+          return metrics;
+        }
+        const estimated = estimateSessionCost(
+          ctx.sessionManager.getBranch(),
+          pricingCatalog,
+          ctx.model?.id,
+          ctx.model?.provider,
+        );
+        return estimated === undefined
+          ? metrics
+          : {
+              ...metrics,
+              totalCost: estimated,
+              totalCostApproximate: true,
+            };
+      };
+      let usageMetrics: SessionUsageMetrics = collectUsage();
       let refreshing = false;
       let refreshQueued = false;
       let pullRequestRefreshing = false;
@@ -135,6 +163,7 @@ export default function (pi: ExtensionAPI) {
       let disposed = false;
       let refreshTimer: ReturnType<typeof setTimeout> | undefined;
       let providerStatusTimer: ReturnType<typeof setTimeout> | undefined;
+      let pricingTimer: ReturnType<typeof setTimeout> | undefined;
 
       const isActiveFooter = () => !disposed && instanceId === footerInstanceId;
 
@@ -273,7 +302,7 @@ export default function (pi: ExtensionAPI) {
             if (!isActiveFooter()) continue;
 
             footerConfig = loadFooterConfig();
-            usageMetrics = collectSessionUsageMetrics(ctx);
+            usageMetrics = collectUsage();
 
             const git = await collectGitInfo(pi, ctx.cwd, currentGit);
             if (!isActiveFooter()) return;
@@ -320,9 +349,36 @@ export default function (pi: ExtensionAPI) {
         }, refreshMs);
       };
 
+      const refreshPricing = async (force = false) => {
+        if (!isActiveFooter()) return;
+        const pricing = footerConfig.pricing;
+        if (!pricing) {
+          pricingCatalog = undefined;
+          usageMetrics = collectUsage();
+          requestRender();
+          return;
+        }
+        const catalog = await loadPricingCatalog(pricing, { force });
+        if (!isActiveFooter()) return;
+        pricingCatalog = catalog;
+        usageMetrics = collectUsage();
+        requestRender();
+      };
+
+      const schedulePricingRefresh = () => {
+        if (!isActiveFooter()) return;
+        if (pricingTimer) clearTimeout(pricingTimer);
+        const pricing = footerConfig.pricing;
+        if (!pricing) return;
+        pricingTimer = setTimeout(() => {
+          if (!isActiveFooter()) return;
+          void refreshPricing(true).finally(() => schedulePricingRefresh());
+        }, pricing.refreshMs ?? DEFAULT_PRICING_REFRESH_MS);
+      };
+
       const onBranchChange = footerData.onBranchChange(() => {
         if (!isActiveFooter()) return;
-        usageMetrics = collectSessionUsageMetrics(ctx);
+        usageMetrics = collectUsage();
         requestRender();
         void refreshGit();
       });
@@ -331,8 +387,14 @@ export default function (pi: ExtensionAPI) {
         requestRender,
         reschedule: scheduleRefresh,
         rescheduleProviderStatus: scheduleProviderStatusRefresh,
+        reschedulePricing: schedulePricingRefresh,
         refreshProviderStatus: (force = false) => {
           void refreshProviderStatus(force);
+        },
+        refreshUsage: () => {
+          if (!isActiveFooter()) return;
+          usageMetrics = collectUsage();
+          requestRender();
         },
         replaceProviderStatuses: (statuses) => {
           if (!isActiveFooter()) return;
@@ -350,8 +412,10 @@ export default function (pi: ExtensionAPI) {
 
       void refreshGit();
       void refreshProviderStatus(true);
+      void refreshPricing();
       scheduleRefresh();
       scheduleProviderStatusRefresh();
+      schedulePricingRefresh();
 
       return {
         invalidate() {},
@@ -360,6 +424,7 @@ export default function (pi: ExtensionAPI) {
           onBranchChange();
           if (refreshTimer) clearTimeout(refreshTimer);
           if (providerStatusTimer) clearTimeout(providerStatusTimer);
+          if (pricingTimer) clearTimeout(pricingTimer);
           if (activeFooterControls?.requestRender === requestRender) {
             activeFooterControls = undefined;
           }
@@ -473,6 +538,7 @@ export default function (pi: ExtensionAPI) {
           footerConfig = loadFooterConfig();
           activeFooterControls?.reschedule();
           activeFooterControls?.rescheduleProviderStatus();
+          activeFooterControls?.reschedulePricing();
           activeFooterControls?.requestRender();
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
@@ -505,6 +571,11 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("model_select", async () => {
     activeFooterControls?.refreshProviderStatus(true);
+    activeFooterControls?.refreshUsage();
+  });
+
+  pi.on("turn_end", async () => {
+    activeFooterControls?.refreshUsage();
   });
 
   pi.on("session_shutdown", async () => {
