@@ -26,6 +26,7 @@ test("footerConfigValidationErrors accepts remote pricing configuration", () => 
     footerConfigValidationErrors({
       pricing: {
         mode: "estimate-only",
+        matchProviders: ["proxy"],
         request: { url: "https://api.example.com/prices" },
         modelsSelector: "data.models",
         fields: { id: "name", input: "input", output: "output" },

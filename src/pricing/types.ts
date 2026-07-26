@@ -46,6 +46,7 @@ export interface PricingProviderRegistration {
 
 export interface PricingConfig {
   mode: PricingMode;
+  matchProviders?: string[];
   request: DeclarativeRequestConfig;
   modelsSelector: string;
   fields: PricingFieldConfig;

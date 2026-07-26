@@ -23,6 +23,7 @@ export function estimateSessionCost(
   catalog: PricingCatalog,
   fallbackModelId?: string,
   fallbackProviderId?: string,
+  matchProviders?: readonly string[],
 ): number | undefined {
   let total = 0;
   let priced = false;
@@ -34,6 +35,12 @@ export function estimateSessionCost(
     if (!usage) continue;
     const modelId = entry.message.model ?? fallbackModelId;
     const providerId = entry.message.provider ?? fallbackProviderId;
+    if (
+      matchProviders &&
+      (!providerId || !matchProviders.includes(providerId))
+    ) {
+      continue;
+    }
     const price = findModelPrice(catalog, modelId, providerId);
     if (!price) continue;
     total += estimateUsageCost(usage, price);

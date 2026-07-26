@@ -332,6 +332,7 @@ Estimate-only pricing reads model rates from a separate JSON API and recalculate
 {
   "pricing": {
     "mode": "estimate-only",
+    "matchProviders": ["priced-proxy"],
     "request": {
       "url": "https://api.example.com/v1/prices",
       "headers": {
@@ -354,7 +355,7 @@ Estimate-only pricing reads model rates from a separate JSON API and recalculate
 }
 ```
 
-`modelsSelector` must select an array. Field selectors are evaluated relative to each array item. Set `unit` to `per_token` when the API returns per-token rates; values are normalized to Pi's per-million-token convention. The optional numeric `transform` uses the same scale/offset/invert/clamp/round pipeline as provider resources. When an API omits `cacheRead`, pricing defaults it to 10% of that model's input-token rate; an explicit cache-read price always wins.
+`modelsSelector` must select an array. Field selectors are evaluated relative to each array item. Use `matchProviders` to scope an estimate catalog to the exact Pi provider IDs it prices, preventing identical model IDs on other providers from using the wrong rates. Set `unit` to `per_token` when the API returns per-token rates; values are normalized to Pi's per-million-token convention. The optional numeric `transform` uses the same scale/offset/invert/clamp/round pipeline as provider resources. When an API omits `cacheRead`, pricing defaults it to 10% of that model's input-token rate; an explicit cache-read price always wins.
 
 Pricing has its own low-frequency cache and refresh timer. A network or parsing failure falls back to the pricing disk cache and never prevents Pi from starting. Balance and quota refreshes continue independently.
 

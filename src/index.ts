@@ -181,6 +181,7 @@ export default async function (pi: ExtensionAPI) {
           pricingCatalog,
           ctx.model?.id,
           ctx.model?.provider,
+          footerConfig.pricing.matchProviders,
         );
         return estimated === undefined
           ? metrics

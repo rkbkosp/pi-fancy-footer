@@ -202,6 +202,12 @@ const pricingRegistrationSchema = Type.Object(
 const pricingConfigSchema = Type.Object(
   {
     mode: literalUnion(["estimate-only", "register-provider"]),
+    matchProviders: Type.Optional(
+      Type.Array(Type.String({ minLength: 1 }), {
+        minItems: 1,
+        uniqueItems: true,
+      }),
+    ),
     request: declarativeRequestSchema,
     modelsSelector: Type.String({ minLength: 1 }),
     fields: pricingFieldsSchema,

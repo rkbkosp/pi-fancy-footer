@@ -133,6 +133,11 @@ test("pricing estimates input, output, and cache token costs", () => {
     ),
     0.2,
   );
+  const catalog = {
+    fetchedAt: new Date().toISOString(),
+    source: "api" as const,
+    prices: [price],
+  };
   assert.equal(
     estimateSessionCost(
       [
@@ -146,9 +151,38 @@ test("pricing estimates input, output, and cache token costs", () => {
           },
         },
       ],
-      { fetchedAt: new Date().toISOString(), source: "api", prices: [price] },
+      catalog,
     ),
     3,
+  );
+  assert.equal(
+    estimateSessionCost(
+      [
+        {
+          type: "message",
+          message: {
+            role: "assistant",
+            provider: "openai-codex",
+            model: "model-a",
+            usage: { input: 1_000_000 },
+          },
+        },
+        {
+          type: "message",
+          message: {
+            role: "assistant",
+            provider: "zero",
+            model: "model-a",
+            usage: { input: 1_000_000 },
+          },
+        },
+      ],
+      catalog,
+      undefined,
+      undefined,
+      ["zero"],
+    ),
+    2,
   );
 });
 
