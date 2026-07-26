@@ -1,3 +1,4 @@
+import { defaultCacheReadPrice } from "./defaults.ts";
 import type { NormalizedModelPrice, PricingCatalog } from "./types.ts";
 
 interface UsageLike {
@@ -52,7 +53,7 @@ export function estimateUsageCost(
   return (
     (input * (price.input ?? 0) +
       output * (price.output ?? 0) +
-      cacheRead * (price.cacheRead ?? price.input ?? 0) +
+      cacheRead * (price.cacheRead ?? defaultCacheReadPrice(price.input) ?? 0) +
       cacheWrite * (price.cacheWrite ?? price.input ?? 0)) /
     1_000_000
   );

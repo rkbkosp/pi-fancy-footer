@@ -1,6 +1,7 @@
 import { ProviderStatusFailure } from "../provider-status/errors.ts";
 import { selectJson } from "../provider-status/selector.ts";
 import { transformNumber } from "../provider-status/transform.ts";
+import { defaultCacheReadPrice } from "./defaults.ts";
 import type {
   NormalizedModelPrice,
   PricingConfig,
@@ -61,6 +62,7 @@ function normalizeModelPrice(
     price[field] =
       config.unit === "per_token" ? normalized * 1_000_000 : normalized;
   }
+  price.cacheRead ??= defaultCacheReadPrice(price.input);
   return price.input === undefined && price.output === undefined
     ? undefined
     : price;

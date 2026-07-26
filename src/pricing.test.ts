@@ -61,6 +61,43 @@ test("normalizePricingResponse converts remote prices to per-million-token rates
   ]);
 });
 
+test("normalizePricingResponse parses discounted gateway prices and derives cache read", () => {
+  const prices = normalizePricingResponse(
+    {
+      items: [
+        {
+          model: "claude-opus-4-6",
+          inputUsdPerM: "0.75",
+          outputUsdPerM: "3.75",
+          inputUsdPerMOriginal: "5",
+          outputUsdPerMOriginal: "25",
+          discount: 0.15,
+        },
+      ],
+    },
+    {
+      modelsSelector: "items",
+      fields: {
+        id: "model",
+        input: "inputUsdPerM",
+        output: "outputUsdPerM",
+      },
+      currency: "USD",
+      unit: "per_million_tokens",
+    },
+  );
+  assert.deepEqual(prices, [
+    {
+      id: "claude-opus-4-6",
+      input: 0.75,
+      output: 3.75,
+      cacheRead: 0.075,
+      currency: "USD",
+      unit: "per_million_tokens",
+    },
+  ]);
+});
+
 test("pricing estimates input, output, and cache token costs", () => {
   const price = {
     id: "model-a",
@@ -82,6 +119,19 @@ test("pricing estimates input, output, and cache token costs", () => {
       price,
     ),
     3.53,
+  );
+  assert.equal(
+    estimateUsageCost(
+      { cacheRead: 1_000_000 },
+      {
+        id: "model-without-cache-price",
+        input: 2,
+        output: 10,
+        currency: "USD",
+        unit: "per_million_tokens",
+      },
+    ),
+    0.2,
   );
   assert.equal(
     estimateSessionCost(
@@ -263,7 +313,7 @@ test("register-provider falls back safely and calls Pi registration", () => {
   assert.deepEqual(registeredConfig.models[0]?.cost, {
     input: 1,
     output: 4,
-    cacheRead: 1,
+    cacheRead: 0.1,
     cacheWrite: 1,
   });
 });

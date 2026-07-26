@@ -2,6 +2,7 @@ import type {
   ExtensionAPI,
   ProviderConfig,
 } from "@earendil-works/pi-coding-agent";
+import { defaultCacheReadPrice } from "./defaults.ts";
 import { findModelPrice } from "./estimate.ts";
 import type {
   PricingCatalog,
@@ -42,6 +43,7 @@ export function buildProviderConfig(
         : undefined;
       const usableRemote = remote?.currency === "USD" ? remote : undefined;
       const fallback = model.fallbackCost ?? {};
+      const inputCost = usableRemote?.input ?? fallback.input ?? 0;
       return {
         id: model.id,
         name: model.name ?? model.id,
@@ -50,18 +52,15 @@ export function buildProviderConfig(
         reasoning: model.reasoning ?? false,
         input: model.input ?? ["text"],
         cost: {
-          input: usableRemote?.input ?? fallback.input ?? 0,
+          input: inputCost,
           output: usableRemote?.output ?? fallback.output ?? 0,
           cacheRead:
             usableRemote?.cacheRead ??
             fallback.cacheRead ??
-            fallback.input ??
+            defaultCacheReadPrice(inputCost) ??
             0,
           cacheWrite:
-            usableRemote?.cacheWrite ??
-            fallback.cacheWrite ??
-            fallback.input ??
-            0,
+            usableRemote?.cacheWrite ?? fallback.cacheWrite ?? inputCost,
         },
         contextWindow: model.contextWindow ?? 128_000,
         maxTokens: model.maxTokens ?? 16_384,
