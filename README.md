@@ -210,6 +210,120 @@ Selectors support object paths and array indexes, for example `data.quota` and `
 
 Requests support `GET` and JSON `POST` bodies. `$ENV_VAR` and `${ENV_VAR}` references are resolved in URLs, headers, and body strings. Missing variables are configuration errors. Responses must be JSON, are limited to 1 MiB by default, and time out after 5 seconds by default. Redirects are disabled unless explicitly enabled; authorization and cookie headers are removed when a redirect changes hosts. Raw responses and request credentials are never cached.
 
+#### Declarative provider recipes
+
+The full example above covers a normal nested JSON balance, environment-variable authentication, a Unix-seconds reset time, and a `matchProviders` alias. These additional recipes cover common API shapes.
+
+**New API / One API-style quota balance:**
+
+```json
+{
+  "providerStatus": {
+    "showCredits": true,
+    "customProviders": {
+      "new-api": {
+        "request": {
+          "url": "https://gateway.example.com/api/user/self",
+          "headers": { "Authorization": "Bearer $NEW_API_TOKEN" }
+        },
+        "balances": [
+          {
+            "id": "quota",
+            "label": "balance",
+            "selector": "data.quota",
+            "transform": { "scale": 0.000002, "round": 2 },
+            "currency": "USD"
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+**Absolute monthly requests and multiple percentage windows:**
+
+```json
+{
+  "providerStatus": {
+    "customProviders": {
+      "request-proxy": {
+        "request": { "url": "https://api.example.com/limits" },
+        "windows": [
+          {
+            "id": "monthly",
+            "label": "month",
+            "remainingSelector": "limits.month.remaining",
+            "limitSelector": "limits.month.limit",
+            "unit": "requests",
+            "resetAtSelector": "limits.month.reset_at",
+            "timestampUnit": "milliseconds"
+          },
+          {
+            "id": "hourly",
+            "label": "1h",
+            "remainingPercentSelector": "limits.hour.remaining_percent"
+          },
+          {
+            "id": "weekly",
+            "label": "7d",
+            "usedPercentSelector": "limits.week.used_percent"
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+**POST body with a user ID:**
+
+```json
+{
+  "providerStatus": {
+    "customProviders": {
+      "account-api": {
+        "request": {
+          "url": "https://api.example.com/account/quota",
+          "method": "POST",
+          "headers": { "Authorization": "Bearer ${ACCOUNT_API_KEY}" },
+          "body": { "user_id": "$ACCOUNT_USER_ID" }
+        },
+        "balances": [
+          {
+            "id": "balance",
+            "selector": "result.balance",
+            "currency": "CNY"
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+**Credits only, without a currency:**
+
+```json
+{
+  "providerStatus": {
+    "showCredits": true,
+    "customProviders": {
+      "credit-api": {
+        "request": { "url": "https://api.example.com/credits" },
+        "balances": [
+          {
+            "id": "credits",
+            "selector": "data.remaining_credits",
+            "unit": "credits"
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
 ### Remote model pricing
 
 Estimate-only pricing reads model rates from a separate JSON API and recalculates the current session cost without changing Pi's provider definitions. Estimated totals use an `≈` marker and do not rewrite historical session messages or `~/.pi/agent/models.json`.
