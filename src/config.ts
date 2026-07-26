@@ -43,6 +43,7 @@ import {
   PROVIDER_STATUS_PROVIDER_IDS,
   type BuiltInFooterWidgetId,
   type FooterConfigSnapshot,
+  type FooterIconFamily,
   type FooterWidgetAlign,
   type FooterWidgetColor,
   type FooterWidgetConfigOverride,
@@ -355,7 +356,9 @@ function parseJsonFile(filePath: string): unknown | undefined {
 }
 
 function defaultFooterConfig(): FooterConfigSnapshot {
-  return structuredClone(DEFAULT_FOOTER_CONFIG);
+  const config = structuredClone(DEFAULT_FOOTER_CONFIG);
+  config.iconFamily = resolveFooterIconFamily();
+  return config;
 }
 
 function pruneWidgetOverrides(
@@ -523,6 +526,18 @@ function pricingSemanticErrors(value: unknown): string[] {
   return errors;
 }
 
+export function resolveFooterIconFamily(
+  configured?: FooterIconFamily,
+  environment: NodeJS.ProcessEnv = process.env,
+): FooterIconFamily {
+  if (configured) return configured;
+  return environment.SSH_CONNECTION ||
+    environment.SSH_CLIENT ||
+    environment.SSH_TTY
+    ? "unicode"
+    : DEFAULT_FOOTER_CONFIG.iconFamily;
+}
+
 function parseFooterConfig(
   filePath: string,
   value: unknown,
@@ -537,7 +552,7 @@ function parseFooterConfig(
   const input = value as FooterConfigSnapshot;
   return {
     refreshMs: input.refreshMs ?? DEFAULT_FOOTER_CONFIG.refreshMs,
-    iconFamily: input.iconFamily ?? DEFAULT_FOOTER_CONFIG.iconFamily,
+    iconFamily: resolveFooterIconFamily(input.iconFamily),
     gaugeStyle: input.gaugeStyle ?? DEFAULT_FOOTER_CONFIG.gaugeStyle,
     gaugeWidth: input.gaugeWidth ?? DEFAULT_FOOTER_CONFIG.gaugeWidth,
     gaugeColors: {

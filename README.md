@@ -132,7 +132,9 @@ Top-level settings:
 
 - `refreshMs` (number)
 - `iconFamily`
-  (`nerd` | `emoji` | `unicode` | `ascii`)
+  (`nerd` | `emoji` | `unicode` | `ascii`); when omitted, local sessions use
+  `nerd` and SSH sessions automatically use the more portable `unicode`
+  family. Set it explicitly to override SSH detection
 - `gaugeStyle`
   (`blocks` | `lines` | `circles` | `parallelograms` | `diamonds` | `bars` |
   `stars` | `specks`)

@@ -5,6 +5,7 @@ import {
   genericFooterSettingsItems,
   moveCustomProviderToIndex,
   plainSettingValue,
+  resolveFooterIconFamily,
   setCustomProviderEnabled,
 } from "./config.ts";
 import { DEFAULT_FOOTER_CONFIG } from "./shared.ts";
@@ -18,6 +19,18 @@ test("footerConfigValidationErrors accepts a valid config", () => {
       widgets: { "context-bar": { row: 0 } },
     }),
     [],
+  );
+});
+
+test("resolveFooterIconFamily uses portable icons over SSH", () => {
+  assert.equal(resolveFooterIconFamily(undefined, {}), "nerd");
+  assert.equal(
+    resolveFooterIconFamily(undefined, { SSH_CONNECTION: "host details" }),
+    "unicode",
+  );
+  assert.equal(
+    resolveFooterIconFamily("nerd", { SSH_TTY: "/dev/pts/1" }),
+    "nerd",
   );
 });
 
