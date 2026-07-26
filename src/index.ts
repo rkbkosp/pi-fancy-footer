@@ -53,6 +53,7 @@ import {
   DEFAULT_PRICING_REFRESH_MS,
   estimateSessionCost,
   loadPricingCatalog,
+  registerProviderWithPricing,
   type PricingCatalog,
 } from "./pricing/index.ts";
 
@@ -71,7 +72,7 @@ const PACKAGE_VERSION = (
   createRequire(import.meta.url)("../package.json") as { version: string }
 ).version;
 
-export default function (pi: ExtensionAPI) {
+export default async function (pi: ExtensionAPI) {
   let footerConfig: FooterConfigSnapshot = {
     refreshMs: DEFAULT_FOOTER_CONFIG.refreshMs,
     iconFamily: DEFAULT_FOOTER_CONFIG.iconFamily,
@@ -89,6 +90,43 @@ export default function (pi: ExtensionAPI) {
     widgets: { ...DEFAULT_FOOTER_CONFIG.widgets },
     extensionWidgets: { ...DEFAULT_FOOTER_CONFIG.extensionWidgets },
   };
+  let registeredPricingProviderId: string | undefined;
+  const applyPricingRegistration = (
+    config: FooterConfigSnapshot["pricing"],
+    catalog?: PricingCatalog,
+  ) => {
+    const nextProviderId =
+      config?.mode === "register-provider"
+        ? config.registration?.id
+        : undefined;
+    if (
+      registeredPricingProviderId &&
+      registeredPricingProviderId !== nextProviderId
+    ) {
+      pi.unregisterProvider(registeredPricingProviderId);
+      registeredPricingProviderId = undefined;
+    }
+    if (!config || config.mode !== "register-provider") return;
+    try {
+      if (registerProviderWithPricing(pi, config, catalog)) {
+        registeredPricingProviderId = config.registration?.id;
+      }
+    } catch (error) {
+      console.warn(
+        `Failed to register pricing provider: ${redactSensitiveText(
+          error instanceof Error ? error.message : String(error),
+        )}`,
+      );
+    }
+  };
+
+  const startupConfig = loadFooterConfig();
+  let startupPricingCatalog: PricingCatalog | undefined;
+  if (startupConfig.pricing?.mode === "register-provider") {
+    startupPricingCatalog = await loadPricingCatalog(startupConfig.pricing);
+    applyPricingRegistration(startupConfig.pricing, startupPricingCatalog);
+  }
+
   const dataWidgets = new FancyFooterDataWidgetStore();
   let extensionWidgets: NormalizedFancyFooterDataWidget[] = [];
 
@@ -132,7 +170,7 @@ export default function (pi: ExtensionAPI) {
       const fallbackThinkingLevel = pi.getThinkingLevel();
       let currentGit = { ...EMPTY_GIT_INFO };
       let providerStatuses = new Map<string, ProviderStatusSnapshot>();
-      let pricingCatalog: PricingCatalog | undefined;
+      let pricingCatalog: PricingCatalog | undefined = startupPricingCatalog;
       const collectUsage = (): SessionUsageMetrics => {
         const metrics = collectSessionUsageMetrics(ctx);
         if (footerConfig.pricing?.mode !== "estimate-only" || !pricingCatalog) {
@@ -354,6 +392,7 @@ export default function (pi: ExtensionAPI) {
         const pricing = footerConfig.pricing;
         if (!pricing) {
           pricingCatalog = undefined;
+          applyPricingRegistration(undefined);
           usageMetrics = collectUsage();
           requestRender();
           return;
@@ -361,6 +400,7 @@ export default function (pi: ExtensionAPI) {
         const catalog = await loadPricingCatalog(pricing, { force });
         if (!isActiveFooter()) return;
         pricingCatalog = catalog;
+        applyPricingRegistration(pricing, catalog);
         usageMetrics = collectUsage();
         requestRender();
       };
@@ -579,6 +619,10 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown", async () => {
+    if (registeredPricingProviderId) {
+      pi.unregisterProvider(registeredPricingProviderId);
+      registeredPricingProviderId = undefined;
+    }
     stopDataWidgetListener();
     invalidateActiveFooter();
     if (dataWidgets.clear()) extensionWidgets = [];

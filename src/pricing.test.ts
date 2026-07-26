@@ -10,6 +10,10 @@ import {
   loadPricingCatalog,
 } from "./pricing/fetch.ts";
 import { normalizePricingResponse } from "./pricing/normalize.ts";
+import {
+  buildProviderConfig,
+  registerProviderWithPricing,
+} from "./pricing/register.ts";
 import type { PricingConfig } from "./pricing/types.ts";
 
 const baseConfig: PricingConfig = {
@@ -182,6 +186,86 @@ test("loadPricingCatalog uses an independent stale disk cache", async (t) => {
   assert.equal(cached?.source, "cache");
   assert.equal(cached?.stale, true);
   assert.equal(cached?.prices[0]?.id, "model-a");
+});
+
+test("register-provider builds Pi model costs from remote prices", () => {
+  const registration = {
+    id: "priced-proxy",
+    baseUrl: "https://proxy.example.com/v1",
+    apiKey: "$PROXY_API_KEY",
+    api: "openai-completions",
+    models: [
+      {
+        id: "model-a",
+        reasoning: true,
+        input: ["text", "image"] as ("text" | "image")[],
+        contextWindow: 200_000,
+        maxTokens: 16_384,
+      },
+    ],
+  };
+  const provider = buildProviderConfig(registration, {
+    fetchedAt: new Date().toISOString(),
+    source: "api",
+    prices: [
+      {
+        id: "model-a",
+        input: 2,
+        output: 10,
+        cacheRead: 1,
+        cacheWrite: 3,
+        currency: "USD",
+        unit: "per_million_tokens",
+      },
+    ],
+  });
+
+  assert.deepEqual(provider.models?.[0]?.cost, {
+    input: 2,
+    output: 10,
+    cacheRead: 1,
+    cacheWrite: 3,
+  });
+  assert.equal(provider.models?.[0]?.contextWindow, 200_000);
+});
+
+test("register-provider falls back safely and calls Pi registration", () => {
+  let registered: { id: string; config: unknown } | undefined;
+  const pricing: PricingConfig = {
+    ...baseConfig,
+    mode: "register-provider",
+    registration: {
+      id: "priced-proxy",
+      baseUrl: "https://proxy.example.com/v1",
+      api: "openai-completions",
+      models: [
+        {
+          id: "model-a",
+          fallbackCost: { input: 1, output: 4 },
+        },
+      ],
+    },
+  };
+  const didRegister = registerProviderWithPricing(
+    {
+      registerProvider(id: string, providerConfig: unknown) {
+        registered = { id, config: providerConfig };
+      },
+    } as never,
+    pricing,
+  );
+
+  assert.equal(didRegister, true);
+  assert.equal(registered?.id, "priced-proxy");
+  const registeredConfig = registered?.config as {
+    models: Array<{ cost: Record<string, number> }>;
+  };
+  assert.deepEqual(registeredConfig.models[0]?.cost, {
+    input: 1,
+    output: 4,
+    cacheRead: 1,
+    cacheWrite: 1,
+  });
 });
 
 test("pricing failures without a cache do not block startup", async () => {

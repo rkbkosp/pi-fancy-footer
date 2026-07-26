@@ -157,6 +157,48 @@ const pricingFieldsSchema = Type.Object(
   { additionalProperties: false },
 );
 
+const pricingFallbackCostSchema = Type.Object(
+  {
+    input: Type.Optional(Type.Number({ minimum: 0 })),
+    output: Type.Optional(Type.Number({ minimum: 0 })),
+    cacheRead: Type.Optional(Type.Number({ minimum: 0 })),
+    cacheWrite: Type.Optional(Type.Number({ minimum: 0 })),
+  },
+  { additionalProperties: false },
+);
+
+const pricingRegistrationModelSchema = Type.Object(
+  {
+    id: Type.String({ minLength: 1 }),
+    name: Type.Optional(Type.String({ minLength: 1 })),
+    api: Type.Optional(Type.String({ minLength: 1 })),
+    baseUrl: Type.Optional(Type.String({ minLength: 1 })),
+    reasoning: Type.Optional(Type.Boolean()),
+    input: Type.Optional(
+      Type.Array(literalUnion(["text", "image"]), { uniqueItems: true }),
+    ),
+    fallbackCost: Type.Optional(pricingFallbackCostSchema),
+    contextWindow: Type.Optional(Type.Integer({ minimum: 1 })),
+    maxTokens: Type.Optional(Type.Integer({ minimum: 1 })),
+    headers: Type.Optional(Type.Record(Type.String(), Type.String())),
+  },
+  { additionalProperties: false },
+);
+
+const pricingRegistrationSchema = Type.Object(
+  {
+    id: Type.String({ minLength: 1 }),
+    name: Type.Optional(Type.String({ minLength: 1 })),
+    baseUrl: Type.String({ minLength: 1 }),
+    apiKey: Type.Optional(Type.String({ minLength: 1 })),
+    api: Type.String({ minLength: 1 }),
+    headers: Type.Optional(Type.Record(Type.String(), Type.String())),
+    authHeader: Type.Optional(Type.Boolean()),
+    models: Type.Array(pricingRegistrationModelSchema, { minItems: 1 }),
+  },
+  { additionalProperties: false },
+);
+
 const pricingConfigSchema = Type.Object(
   {
     mode: literalUnion(["estimate-only", "register-provider"]),
@@ -172,6 +214,7 @@ const pricingConfigSchema = Type.Object(
     cacheTtlMs: Type.Optional(
       Type.Integer({ minimum: 0, maximum: 30 * 24 * 60 * 60 * 1000 }),
     ),
+    registration: Type.Optional(pricingRegistrationSchema),
   },
   { additionalProperties: false },
 );
@@ -432,7 +475,8 @@ function editDistance(a: string, b: string): number {
 }
 
 export function footerConfigValidationErrors(value: unknown): string[] {
-  if (validateFooterConfigFile.Check(value)) return [];
+  const semanticErrors = pricingSemanticErrors(value);
+  if (validateFooterConfigFile.Check(value)) return semanticErrors;
   const seen = new Set<string>();
   const messages: string[] = [];
   for (const error of validateFooterConfigFile.Errors(value)) {
@@ -442,7 +486,35 @@ export function footerConfigValidationErrors(value: unknown): string[] {
       messages.push(message);
     }
   }
+  for (const message of semanticErrors) {
+    if (!seen.has(message)) messages.push(message);
+  }
   return messages;
+}
+
+function pricingSemanticErrors(value: unknown): string[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const pricing = (value as { pricing?: unknown }).pricing;
+  if (!pricing || typeof pricing !== "object" || Array.isArray(pricing)) {
+    return [];
+  }
+  const input = pricing as {
+    mode?: unknown;
+    registration?: unknown;
+    fields?: { input?: unknown; output?: unknown };
+  };
+  const errors: string[] = [];
+  if (input.mode === "register-provider" && !input.registration) {
+    errors.push(
+      "  - /pricing: register-provider mode requires a registration block",
+    );
+  }
+  if (!input.fields?.input && !input.fields?.output) {
+    errors.push(
+      "  - /pricing/fields: at least one input or output selector is required",
+    );
+  }
+  return errors;
 }
 
 function parseFooterConfig(

@@ -244,6 +244,53 @@ Estimate-only pricing reads model rates from a separate JSON API and recalculate
 
 Pricing has its own low-frequency cache and refresh timer. A network or parsing failure falls back to the pricing disk cache and never prevents Pi from starting. Balance and quota refreshes continue independently.
 
+Set `mode` to `register-provider` to register model definitions with Pi at runtime so new requests use the remote prices in native `usage.cost` accounting:
+
+```json
+{
+  "pricing": {
+    "mode": "register-provider",
+    "request": {
+      "url": "https://api.example.com/v1/prices"
+    },
+    "modelsSelector": "data.models",
+    "fields": {
+      "id": "name",
+      "input": "input_price",
+      "output": "output_price",
+      "cacheRead": "cache_read_price",
+      "cacheWrite": "cache_write_price"
+    },
+    "unit": "per_million_tokens",
+    "registration": {
+      "id": "priced-proxy",
+      "name": "Priced Proxy",
+      "baseUrl": "https://proxy.example.com/v1",
+      "apiKey": "$PROXY_API_KEY",
+      "api": "openai-completions",
+      "models": [
+        {
+          "id": "model-a",
+          "name": "Model A",
+          "reasoning": true,
+          "input": ["text", "image"],
+          "contextWindow": 200000,
+          "maxTokens": 16384,
+          "fallbackCost": {
+            "input": 1,
+            "output": 4,
+            "cacheRead": 0.5,
+            "cacheWrite": 1
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+The registration exists only for the running extension. Remote USD prices override `fallbackCost`; if no usable price catalog is available, the fallback rates keep the provider usable. The extension never writes to `models.json`.
+
 Supported per-widget overrides for both `widgets` and `extensionWidgets`:
 
 - `enabled` (boolean)

@@ -13,6 +13,37 @@ export interface PricingFieldConfig {
   cacheWrite?: string;
 }
 
+export interface PricingFallbackCost {
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+}
+
+export interface PricingRegistrationModel {
+  id: string;
+  name?: string;
+  api?: string;
+  baseUrl?: string;
+  reasoning?: boolean;
+  input?: ("text" | "image")[];
+  fallbackCost?: PricingFallbackCost;
+  contextWindow?: number;
+  maxTokens?: number;
+  headers?: Record<string, string>;
+}
+
+export interface PricingProviderRegistration {
+  id: string;
+  name?: string;
+  baseUrl: string;
+  apiKey?: string;
+  api: string;
+  headers?: Record<string, string>;
+  authHeader?: boolean;
+  models: PricingRegistrationModel[];
+}
+
 export interface PricingConfig {
   mode: PricingMode;
   request: DeclarativeRequestConfig;
@@ -23,6 +54,7 @@ export interface PricingConfig {
   unit?: "per_token" | "per_million_tokens";
   refreshMs?: number;
   cacheTtlMs?: number;
+  registration?: PricingProviderRegistration;
 }
 
 export interface NormalizedModelPrice {

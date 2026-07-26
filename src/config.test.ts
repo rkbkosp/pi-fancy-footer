@@ -36,6 +36,39 @@ test("footerConfigValidationErrors accepts remote pricing configuration", () => 
   );
 });
 
+test("footerConfigValidationErrors accepts dynamic priced provider registration", () => {
+  assert.deepEqual(
+    footerConfigValidationErrors({
+      pricing: {
+        mode: "register-provider",
+        request: { url: "https://api.example.com/prices" },
+        modelsSelector: "data.models",
+        fields: { id: "name", input: "input", output: "output" },
+        registration: {
+          id: "priced-proxy",
+          baseUrl: "https://proxy.example.com/v1",
+          apiKey: "$PROXY_API_KEY",
+          api: "openai-completions",
+          models: [{ id: "model-a", contextWindow: 200000 }],
+        },
+      },
+    }),
+    [],
+  );
+});
+
+test("footerConfigValidationErrors requires registration in register-provider mode", () => {
+  const errors = footerConfigValidationErrors({
+    pricing: {
+      mode: "register-provider",
+      request: { url: "https://api.example.com/prices" },
+      modelsSelector: "data.models",
+      fields: { id: "name", input: "input" },
+    },
+  });
+  assert.match(errors.join("\n"), /requires a registration block/);
+});
+
 test("footerConfigValidationErrors names unknown keys with rename hints", () => {
   const errors = footerConfigValidationErrors({ contextBarStyle: "blocks" });
   assert.deepEqual(errors, [
