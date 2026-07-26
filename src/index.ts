@@ -485,6 +485,7 @@ export default async function (pi: ExtensionAPI) {
             Array.from(providerStatuses.values()).sort((a, b) =>
               a.provider.localeCompare(b.provider),
             ),
+            footerData.getExtensionStatuses(),
           );
         },
       };

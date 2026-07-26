@@ -133,6 +133,28 @@ test("renderFooterLines marks estimate-only session cost as approximate", () => 
   assert.match(lines.join("\n"), /\$≈3\.53/);
 });
 
+test("renderFooterLines preserves statuses from other extensions", () => {
+  const lines = renderFooterLines(
+    120,
+    contextWithModel({ id: "model-a", name: "Model A" }) as never,
+    EMPTY_GIT_INFO,
+    "off",
+    theme as never,
+    usageMetrics,
+    footerConfig,
+    [],
+    [],
+    new Map([
+      ["tps", "TPS 42 avg"],
+      ["hindsight", "memory\tconnected"],
+    ]),
+  );
+
+  assert.equal(lines.length, 3);
+  assert.equal(lines[2], "memory connected TPS 42 avg");
+  assert.ok(lines.every((line) => visibleWidth(line) <= 120));
+});
+
 test("renderFooterLines renders max thinking with the default text color", () => {
   const colors: string[] = [];
   const coloredTheme = {

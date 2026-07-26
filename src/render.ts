@@ -1060,6 +1060,7 @@ export function renderFooterLines(
   footerConfig: FooterConfigSnapshot,
   extensionWidgets: readonly NormalizedFancyFooterDataWidget[] = [],
   providerStatuses: readonly ProviderStatusSnapshot[] = [],
+  extensionStatuses: ReadonlyMap<string, string> = new Map(),
 ): string[] {
   if (width <= 0) return ["", ""];
 
@@ -1116,5 +1117,21 @@ export function renderFooterLines(
   }
 
   while (rows.length < 2) rows.push("");
+
+  const statusLine = Array.from(extensionStatuses.entries())
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([, text]) => sanitizeExtensionStatusText(text))
+    .filter(Boolean)
+    .join(" ");
+  if (statusLine) {
+    rows.push(truncateToWidth(statusLine, width, theme.fg("dim", "...")));
+  }
   return rows;
+}
+
+function sanitizeExtensionStatusText(text: string): string {
+  return text
+    .replace(/[\r\n\t]/g, " ")
+    .replace(/ +/g, " ")
+    .trim();
 }

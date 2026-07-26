@@ -40,6 +40,8 @@ pi install npm:pi-fancy-footer
 - Repo / path, branch, optional commit SHA (hidden by default), open PR
   number, unresolved PR review threads, and PR CI status
 - Git diff stats and ahead/behind status
+- Footer statuses published by other extensions through Pi's `setStatus` API,
+  including TPS meters and memory connection/activity indicators
 
 ## 📸 Configuration editor
 
@@ -451,6 +453,11 @@ Built-in widget IDs:
 3rd-party widget IDs are extension-defined and live under `extensionWidgets`.
 
 ## 🧩 Extension widgets
+
+The custom footer preserves Pi's normal extension-status line, sorted by status
+ID and truncated to terminal width. Extensions such as `pi-pulse` and
+`hindsight-pi` therefore remain visible without depending on fancy-footer's
+widget protocol.
 
 Other pi extensions can contribute fancy-footer widgets.
 
