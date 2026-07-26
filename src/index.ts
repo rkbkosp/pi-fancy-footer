@@ -48,6 +48,7 @@ interface ActiveFooterControls {
   requestRender: () => void;
   reschedule: () => void;
   rescheduleProviderStatus: () => void;
+  refreshProviderStatus: (force?: boolean) => void;
   updateProviderStatus: (status: ProviderStatusSnapshot) => void;
 }
 
@@ -64,7 +65,12 @@ export default function (pi: ExtensionAPI) {
     gaugeColors: { ...DEFAULT_FOOTER_CONFIG.gaugeColors },
     defaultTextColor: DEFAULT_FOOTER_CONFIG.defaultTextColor,
     defaultIconColor: DEFAULT_FOOTER_CONFIG.defaultIconColor,
-    providerStatus: { ...DEFAULT_FOOTER_CONFIG.providerStatus },
+    providerStatus: {
+      ...DEFAULT_FOOTER_CONFIG.providerStatus,
+      customProviders: structuredClone(
+        DEFAULT_FOOTER_CONFIG.providerStatus.customProviders,
+      ),
+    },
     widgets: { ...DEFAULT_FOOTER_CONFIG.widgets },
     extensionWidgets: { ...DEFAULT_FOOTER_CONFIG.extensionWidgets },
   };
@@ -174,6 +180,7 @@ export default function (pi: ExtensionAPI) {
             const next = await collectProviderStatus(
               pi,
               footerConfig.providerStatus,
+              ctx.model,
             );
             if (!isActiveFooter()) return;
             providerStatuses = new Map(
@@ -317,6 +324,9 @@ export default function (pi: ExtensionAPI) {
         requestRender,
         reschedule: scheduleRefresh,
         rescheduleProviderStatus: scheduleProviderStatusRefresh,
+        refreshProviderStatus: (force = false) => {
+          void refreshProviderStatus(force);
+        },
         updateProviderStatus: (status) => {
           if (!isActiveFooter()) return;
           providerStatuses.set(status.provider, status);
@@ -405,6 +415,11 @@ export default function (pi: ExtensionAPI) {
     for (const snapshot of updated) {
       activeFooterControls?.updateProviderStatus(snapshot);
     }
+    activeFooterControls?.refreshProviderStatus();
+  });
+
+  pi.on("model_select", async () => {
+    activeFooterControls?.refreshProviderStatus(true);
   });
 
   pi.on("session_shutdown", async () => {

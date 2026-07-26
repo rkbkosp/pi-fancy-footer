@@ -62,16 +62,89 @@ const literalUnion = (values: readonly string[]) =>
 
 const footerWidgetColorSchema = literalUnion(FOOTER_WIDGET_COLORS);
 const footerIconFamilySchema = literalUnion(FOOTER_ICON_FAMILIES);
-const gaugeStyleSchema = literalUnion(
-  GAUGE_STYLES.map((style) => style.label),
-);
+const gaugeStyleSchema = literalUnion(GAUGE_STYLES.map((style) => style.label));
 const footerWidgetAlignSchema = literalUnion(["left", "middle", "right"]);
 const footerWidgetFillSchema = literalUnion(["none", "grow"]);
 const footerWidgetIconModeSchema = literalUnion(["default", "hide"]);
-const providerStatusProviderSchema = literalUnion(
-  PROVIDER_STATUS_PROVIDER_IDS,
-);
+const providerStatusProviderSchema = literalUnion(PROVIDER_STATUS_PROVIDER_IDS);
 const providerStatusDisplaySchema = literalUnion(PROVIDER_STATUS_DISPLAYS);
+const timestampUnitSchema = literalUnion([
+  "seconds",
+  "milliseconds",
+  "iso8601",
+]);
+const requestMethodSchema = literalUnion(["GET", "POST"]);
+
+const numericTransformSchema = Type.Object(
+  {
+    scale: Type.Optional(Type.Number()),
+    offset: Type.Optional(Type.Number()),
+    invertPercent: Type.Optional(Type.Boolean()),
+    clamp: Type.Optional(Type.Tuple([Type.Number(), Type.Number()])),
+    round: Type.Optional(Type.Integer({ minimum: 0, maximum: 12 })),
+  },
+  { additionalProperties: false },
+);
+
+const declarativeRequestSchema = Type.Object(
+  {
+    url: Type.String({ minLength: 1 }),
+    method: Type.Optional(requestMethodSchema),
+    headers: Type.Optional(Type.Record(Type.String(), Type.String())),
+    body: Type.Optional(Type.Unknown()),
+    timeoutMs: Type.Optional(Type.Integer({ minimum: 1, maximum: 120_000 })),
+    maxResponseBytes: Type.Optional(
+      Type.Integer({ minimum: 1, maximum: 10 * 1024 * 1024 }),
+    ),
+    followRedirects: Type.Optional(Type.Boolean()),
+  },
+  { additionalProperties: false },
+);
+
+const declarativeBalanceSchema = Type.Object(
+  {
+    id: Type.String({ minLength: 1 }),
+    label: Type.Optional(Type.String({ minLength: 1 })),
+    selector: Type.String({ minLength: 1 }),
+    transform: Type.Optional(numericTransformSchema),
+    currency: Type.Optional(Type.String({ minLength: 1 })),
+    unit: Type.Optional(Type.String({ minLength: 1 })),
+    approximate: Type.Optional(Type.Boolean()),
+  },
+  { additionalProperties: false },
+);
+
+const declarativeWindowSchema = Type.Object(
+  {
+    id: Type.String({ minLength: 1 }),
+    label: Type.String({ minLength: 1 }),
+    remainingPercentSelector: Type.Optional(Type.String({ minLength: 1 })),
+    usedPercentSelector: Type.Optional(Type.String({ minLength: 1 })),
+    remainingSelector: Type.Optional(Type.String({ minLength: 1 })),
+    usedSelector: Type.Optional(Type.String({ minLength: 1 })),
+    limitSelector: Type.Optional(Type.String({ minLength: 1 })),
+    transform: Type.Optional(numericTransformSchema),
+    unit: Type.Optional(Type.String({ minLength: 1 })),
+    resetAtSelector: Type.Optional(Type.String({ minLength: 1 })),
+    timestampUnit: Type.Optional(timestampUnitSchema),
+  },
+  { additionalProperties: false },
+);
+
+const declarativeProviderSchema = Type.Object(
+  {
+    label: Type.Optional(Type.String({ minLength: 1 })),
+    matchProviders: Type.Optional(
+      Type.Array(Type.String({ minLength: 1 }), { uniqueItems: true }),
+    ),
+    alwaysRefresh: Type.Optional(Type.Boolean()),
+    enabled: Type.Optional(Type.Boolean()),
+    request: declarativeRequestSchema,
+    balances: Type.Optional(Type.Array(declarativeBalanceSchema)),
+    windows: Type.Optional(Type.Array(declarativeWindowSchema)),
+  },
+  { additionalProperties: false },
+);
 
 const providerStatusConfigSchema = Type.Object(
   {
@@ -91,6 +164,12 @@ const providerStatusConfigSchema = Type.Object(
     display: Type.Optional(providerStatusDisplaySchema),
     showCredits: Type.Optional(Type.Boolean()),
     showReset: Type.Optional(Type.Boolean()),
+    customProviders: Type.Optional(
+      Type.Record(
+        Type.String({ pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" }),
+        declarativeProviderSchema,
+      ),
+    ),
   },
   { additionalProperties: false },
 );
@@ -215,20 +294,22 @@ function pruneWidgetOverrides(
 function parseProviderStatusConfig(
   input: FooterConfigSnapshot["providerStatus"] | undefined,
 ): FooterConfigSnapshot["providerStatus"] {
-  const providers = input?.providers ?? DEFAULT_PROVIDER_STATUS_CONFIG.providers;
+  const providers =
+    input?.providers ?? DEFAULT_PROVIDER_STATUS_CONFIG.providers;
   const knownProviders = PROVIDER_STATUS_PROVIDER_IDS.filter((id) =>
     providers.includes(id),
   );
   return {
-    refreshMs:
-      input?.refreshMs ?? DEFAULT_PROVIDER_STATUS_CONFIG.refreshMs,
-    cacheTtlMs:
-      input?.cacheTtlMs ?? DEFAULT_PROVIDER_STATUS_CONFIG.cacheTtlMs,
+    refreshMs: input?.refreshMs ?? DEFAULT_PROVIDER_STATUS_CONFIG.refreshMs,
+    cacheTtlMs: input?.cacheTtlMs ?? DEFAULT_PROVIDER_STATUS_CONFIG.cacheTtlMs,
     providers: knownProviders,
     display: input?.display ?? DEFAULT_PROVIDER_STATUS_CONFIG.display,
     showCredits:
       input?.showCredits ?? DEFAULT_PROVIDER_STATUS_CONFIG.showCredits,
     showReset: input?.showReset ?? DEFAULT_PROVIDER_STATUS_CONFIG.showReset,
+    customProviders: structuredClone(
+      input?.customProviders ?? DEFAULT_PROVIDER_STATUS_CONFIG.customProviders,
+    ),
   };
 }
 
@@ -258,9 +339,7 @@ function describeConfigError(error: {
 }): string[] {
   const path = error.instancePath || "";
   const display = path || "/";
-  const params = error.params as
-    | { additionalProperties?: unknown }
-    | undefined;
+  const params = error.params as { additionalProperties?: unknown } | undefined;
   const unknown = Array.isArray(params?.additionalProperties)
     ? params.additionalProperties.filter(
         (key): key is string => typeof key === "string",
@@ -461,7 +540,8 @@ function toFooterConfigObject(
     config.providerStatus.showReset !==
       DEFAULT_PROVIDER_STATUS_CONFIG.showReset ||
     config.providerStatus.providers.join(",") !==
-      DEFAULT_PROVIDER_STATUS_CONFIG.providers.join(",")
+      DEFAULT_PROVIDER_STATUS_CONFIG.providers.join(",") ||
+    Object.keys(config.providerStatus.customProviders).length > 0
   ) {
     out.providerStatus = structuredClone(config.providerStatus);
   }

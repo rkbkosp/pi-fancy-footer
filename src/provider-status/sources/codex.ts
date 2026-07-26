@@ -26,6 +26,7 @@ export const CODEX_SOURCE: ProviderStatusSource = {
   label: "Codex",
   usageUrl: CODEX_USAGE_URL,
   preserveMissingWindows: false,
+  kind: "builtin",
   supports: (providerId) =>
     providerId === "openai-codex" || providerId === "openai",
   fetch: fetchCodexProviderStatus,

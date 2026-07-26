@@ -50,10 +50,12 @@ import {
 } from "./data-widgets.ts";
 import {
   buildProviderStatusGauge,
+  formatBalanceMetric,
   formatProviderStatusReset,
   formatProviderStatusText,
   isProviderStatusRelevantToModel,
   providerStatusColor,
+  shouldShowProviderLabel,
 } from "./provider-status.ts";
 
 function buildProviderStatusPart(
@@ -93,13 +95,16 @@ function buildProviderStatusPart(
       if (reset) extras.push(`reset:${reset}`);
     }
     if (config.showCredits) {
-      for (const balance of snapshot.balances) {
-        if (balance.id === "credits" || balance.unit === "credits") {
-          extras.push(`cr:${balance.approximate ? "≈" : ""}${balance.value}`);
-        }
-      }
+      extras.push(...snapshot.balances.map(formatBalanceMetric));
     }
+    const providerLabel = shouldShowProviderLabel(snapshot)
+      ? `${snapshot.label} `
+      : "";
     body =
+      theme.fg(
+        snapshot.stale ? "dim" : defaultTextColor,
+        `${snapshot.stale ? "~" : ""}${providerLabel}`,
+      ) +
       pieces.join(" ") +
       (extras.length > 0
         ? theme.fg(defaultTextColor, ` ${extras.join(" ")}`)

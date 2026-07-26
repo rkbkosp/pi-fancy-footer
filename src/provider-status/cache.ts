@@ -3,6 +3,13 @@ import { dirname, join } from "node:path";
 import { normalizeProviderResourceSnapshot } from "./normalize.ts";
 import type { ProviderStatusSnapshot } from "./types.ts";
 
+export interface CachedProviderSnapshot {
+  version: 1;
+  provider: string;
+  savedAt: string;
+  snapshot: ProviderStatusSnapshot;
+}
+
 export async function readProviderStatusCache(
   providerId: string,
 ): Promise<ProviderStatusSnapshot | undefined> {
@@ -13,7 +20,10 @@ export async function readProviderStatusCache(
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       return undefined;
     }
-    return normalizeProviderResourceSnapshot(parsed);
+    const record = parsed as { version?: unknown; snapshot?: unknown };
+    return normalizeProviderResourceSnapshot(
+      record.version === 1 ? record.snapshot : parsed,
+    );
   } catch {
     return undefined;
   }
@@ -21,8 +31,15 @@ export async function readProviderStatusCache(
 
 export async function writeProviderStatusCache(
   snapshot: ProviderStatusSnapshot,
+  cacheKey = snapshot.provider,
 ): Promise<void> {
-  await writeJsonAtomic(providerStatusCachePath(snapshot.provider), snapshot);
+  const cached: CachedProviderSnapshot = {
+    version: 1,
+    provider: snapshot.provider,
+    savedAt: new Date().toISOString(),
+    snapshot,
+  };
+  await writeJsonAtomic(providerStatusCachePath(cacheKey), cached);
 }
 
 export function isProviderStatusFresh(
@@ -50,5 +67,6 @@ function providerStatusCachePath(providerId: string): string {
   const base =
     process.env.XDG_CACHE_HOME ||
     join(process.env.HOME || process.env.USERPROFILE || ".", ".cache");
-  return join(base, "pi-fancy-footer", "provider-status", `${providerId}.json`);
+  const safeId = providerId.replace(/[^A-Za-z0-9._-]/g, "_");
+  return join(base, "pi-fancy-footer", "provider-status", `${safeId}.json`);
 }

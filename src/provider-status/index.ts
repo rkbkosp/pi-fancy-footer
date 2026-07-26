@@ -6,6 +6,7 @@ import {
   buildGauge,
   formatGaugePercent,
 } from "../shared.ts";
+import { toProviderStatusError } from "./errors.ts";
 import {
   isProviderStatusFresh,
   readProviderStatusCache,
@@ -13,6 +14,7 @@ import {
 } from "./cache.ts";
 import { computeProviderStatusState, remainingPercent } from "./normalize.ts";
 import { ProviderStatusRegistry } from "./registry.ts";
+import { createDeclarativeSource } from "./sources/declarative.ts";
 import {
   ANTHROPIC_SOURCE,
   CLAUDE_USAGE_URL,
@@ -27,6 +29,7 @@ import {
 } from "./sources/codex.ts";
 import type {
   BalanceMetric,
+  DeclarativeProviderConfig,
   HeaderLike,
   ModelLike,
   ProviderStatusSnapshot,
@@ -52,17 +55,23 @@ export type {
   QuotaWindow,
 } from "./types.ts";
 
-export function createProviderStatusRegistry(): ProviderStatusRegistry {
+export function createProviderStatusRegistry(
+  customProviders: Record<string, DeclarativeProviderConfig> = {},
+): ProviderStatusRegistry {
   const registry = new ProviderStatusRegistry();
   registry.register(CODEX_SOURCE);
   registry.register(ANTHROPIC_SOURCE);
+  for (const [id, config] of Object.entries(customProviders)) {
+    if (config.enabled === false) continue;
+    registry.register(createDeclarativeSource(id, config));
+  }
   return registry;
 }
 
-const PROVIDER_STATUS_REGISTRY = createProviderStatusRegistry();
+const BUILTIN_PROVIDER_STATUS_REGISTRY = createProviderStatusRegistry();
 
 export const PROVIDER_STATUS_SOURCES: readonly ProviderStatusSource[] =
-  PROVIDER_STATUS_REGISTRY.list();
+  BUILTIN_PROVIDER_STATUS_REGISTRY.list();
 
 function modelValue(value: unknown): string {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
@@ -122,12 +131,32 @@ export function isProviderStatusRelevantToModel(
 }
 
 function enabledProviderStatusSources(
-  config: Pick<ProviderStatusConfigSnapshot, "providers">,
+  config: ProviderStatusConfigSnapshot,
+  model?: ModelLike | string,
 ): readonly ProviderStatusSource[] {
-  return config.providers.flatMap((id) => {
-    const source = PROVIDER_STATUS_REGISTRY.get(id);
+  const registry = createProviderStatusRegistry(config.customProviders);
+  const enabled = config.providers.flatMap((id) => {
+    const source = registry.get(id);
     return source ? [source] : [];
   });
+  const currentProvider = currentProviderId(model);
+  for (const id of Object.keys(config.customProviders)) {
+    const source = registry.get(id);
+    if (!source || enabled.includes(source)) continue;
+    if (
+      source.alwaysRefresh ||
+      (currentProvider && source.supports(currentProvider))
+    ) {
+      enabled.push(source);
+    }
+  }
+  return enabled;
+}
+
+function currentProviderId(model: ModelLike | string | undefined): string {
+  if (typeof model === "string") return modelValue(model);
+  if (!model) return "";
+  return modelValue(model.provider) || modelValue(model.providerId);
 }
 
 export function formatProviderStatusText(
@@ -144,19 +173,40 @@ export function formatProviderStatusText(
 
   const parts = snapshot.windows.flatMap((window) => {
     const left = remainingPercent(window);
-    return left === undefined
-      ? []
-      : [`${window.label}:${formatGaugePercent(left)}`];
+    if (left !== undefined) {
+      return [`${window.label}:${formatGaugePercent(left)}`];
+    }
+    const unit = window.unit ? ` ${window.unit}` : "";
+    if (window.remaining !== undefined) {
+      return [`${window.label}:${window.remaining}${unit}`];
+    }
+    if (window.used !== undefined && window.limit !== undefined) {
+      return [`${window.label}:${window.used}/${window.limit}${unit}`];
+    }
+    if (window.used !== undefined) {
+      return [`${window.label}:${window.used}${unit}`];
+    }
+    if (window.limit !== undefined) {
+      return [`${window.label}:${window.limit}${unit}`];
+    }
+    return [];
   });
   if (config.showReset && snapshot.windows[0]?.resetAt) {
     const reset = formatReset(snapshot.windows[0].resetAt);
     if (reset) parts.push(`reset:${reset}`);
   }
   if (config.showCredits) {
-    parts.push(...snapshot.balances.map(formatLegacyBalance));
+    parts.push(...snapshot.balances.map(formatBalanceMetric));
   }
 
-  return parts.join(" ");
+  const body = parts.join(" ");
+  if (!body) return "";
+  const label = shouldShowProviderLabel(snapshot)
+    ? `${snapshot.label} `
+    : snapshot.stale
+      ? "~"
+      : "";
+  return `${snapshot.stale && label !== "~" ? "~" : ""}${label}${body}`;
 }
 
 export function providerStatusColor(
@@ -197,20 +247,47 @@ export function buildProviderStatusGauge(
 export async function collectProviderStatus(
   pi: ExtensionAPI,
   config: ProviderStatusConfigSnapshot,
+  model?: ModelLike | string,
 ): Promise<ProviderStatusSnapshot[]> {
   return Promise.all(
-    enabledProviderStatusSources(config).map((source) =>
+    enabledProviderStatusSources(config, model).map((source) =>
       collectProviderStatusFromSource(pi, source, config),
     ),
   );
 }
+
+const providerStatusFlights = new Map<
+  string,
+  Promise<ProviderStatusSnapshot>
+>();
 
 async function collectProviderStatusFromSource(
   pi: ExtensionAPI,
   source: ProviderStatusSource,
   config: ProviderStatusConfigSnapshot,
 ): Promise<ProviderStatusSnapshot> {
-  const cached = await readProviderStatusCache(source.id);
+  const flightKey = source.cacheKey ?? source.id;
+  const active = providerStatusFlights.get(flightKey);
+  if (active) return active;
+
+  const flight = collectProviderStatusFromSourceOnce(pi, source, config);
+  providerStatusFlights.set(flightKey, flight);
+  try {
+    return await flight;
+  } finally {
+    if (providerStatusFlights.get(flightKey) === flight) {
+      providerStatusFlights.delete(flightKey);
+    }
+  }
+}
+
+async function collectProviderStatusFromSourceOnce(
+  pi: ExtensionAPI,
+  source: ProviderStatusSource,
+  config: ProviderStatusConfigSnapshot,
+): Promise<ProviderStatusSnapshot> {
+  const cacheKey = source.cacheKey ?? source.id;
+  const cached = await readProviderStatusCache(cacheKey);
   if (isProviderStatusFresh(cached, config.cacheTtlMs)) {
     return { ...cached, source: "cache" };
   }
@@ -225,7 +302,7 @@ async function collectProviderStatusFromSource(
       ? mergeProviderStatus(displayableCachedStatus(cached), fresh)
       : fresh;
     const { error: _staleError, stale: _stale, ...snapshot } = merged;
-    await writeProviderStatusCache(snapshot).catch(() => undefined);
+    await writeProviderStatusCache(snapshot, cacheKey).catch(() => undefined);
     return snapshot;
   } catch (error) {
     // A refresh failed. The cached quota windows remain valid until they
@@ -250,7 +327,7 @@ function displayableCachedStatus(
   const windows = cached.windows.filter((window) =>
     windowInEffect(window, now),
   );
-  if (windows.length === 0) return undefined;
+  if (windows.length === 0 && cached.balances.length === 0) return undefined;
 
   return {
     ...cached,
@@ -287,10 +364,7 @@ function unavailableProviderStatus(
 }
 
 function providerStatusError(error: unknown) {
-  return {
-    code: "unknown" as const,
-    message: error instanceof Error ? error.message : String(error),
-  };
+  return toProviderStatusError(error);
 }
 
 export async function updateProviderStatusFromHeaders(
@@ -306,7 +380,8 @@ export async function updateProviderStatusFromHeaders(
     const parsed = source.parseHeaders(headers);
     if (!parsed) continue;
 
-    const cached = await readProviderStatusCache(source.id);
+    const cacheKey = source.cacheKey ?? source.id;
+    const cached = await readProviderStatusCache(cacheKey);
     const freshCached =
       config && isProviderStatusFresh(cached, config.cacheTtlMs)
         ? cached
@@ -317,7 +392,7 @@ export async function updateProviderStatusFromHeaders(
       preserveMissingWindows:
         source.preserveMissingWindows || !isWeeklyOnlyCodexStatus(parsed),
     });
-    await writeProviderStatusCache(merged).catch(() => undefined);
+    await writeProviderStatusCache(merged, cacheKey).catch(() => undefined);
     updated.push(merged);
   }
   return updated;
@@ -341,13 +416,21 @@ function mergeProviderStatus(
   for (const balance of existing.balances) balances.set(balance.id, balance);
   for (const balance of update.balances) balances.set(balance.id, balance);
 
+  const {
+    error: _existingError,
+    stale: _existingStale,
+    ...existingBase
+  } = existing;
+  const { error, stale, ...updateBase } = update;
   return {
-    ...existing,
-    ...update,
+    ...existingBase,
+    ...updateBase,
     windows: Array.from(windows.values()).sort(
       (a, b) => windowDurationMinutes(a.label) - windowDurationMinutes(b.label),
     ),
     balances: Array.from(balances.values()),
+    ...(stale ? { stale: true } : {}),
+    ...(error ? { error } : {}),
   };
 }
 
@@ -381,12 +464,26 @@ function formatReset(resetAt: string): string {
   ).padStart(2, "0")}`;
 }
 
-function formatLegacyBalance(balance: BalanceMetric): string {
-  const prefix = balance.approximate ? "≈" : "";
-  if (balance.id === "credits" || balance.unit === "credits") {
-    return `cr:${prefix}${balance.value}`;
+export function formatBalanceMetric(balance: BalanceMetric): string {
+  const approximate = balance.approximate ? "≈" : "";
+  if (balance.id === "credits") return `cr:${approximate}${balance.value}`;
+  if (balance.currency) {
+    const symbol =
+      balance.currency === "CNY"
+        ? "¥"
+        : balance.currency === "USD"
+          ? "$"
+          : `${balance.currency} `;
+    return `${balance.label ? `${balance.label}:` : ""}${approximate}${symbol}${balance.value}`;
   }
-  return `${balance.label ?? balance.id}:${prefix}${balance.value}${
-    balance.unit ? ` ${balance.unit}` : ""
-  }`;
+  const unit = balance.unit ? ` ${balance.unit}` : "";
+  return `${balance.label ? `${balance.label}:` : ""}${approximate}${balance.value}${unit}`;
+}
+
+export function shouldShowProviderLabel(
+  snapshot: ProviderStatusSnapshot,
+): boolean {
+  return (
+    snapshot.provider !== "openai-codex" && snapshot.provider !== "anthropic"
+  );
 }

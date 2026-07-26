@@ -23,7 +23,7 @@ pi install npm:pi-fancy-footer
 ## 📊 What it shows
 
 - Active model + thinking level
-- Provider quota status for OpenAI Codex and Claude models
+- Provider quota status for OpenAI Codex and Claude models, plus declarative API balances and quota windows
 - A mini gauge of used context, which can optionally grow into a
   full-width bar, plus an optional context-capacity widget (hidden by
   default)
@@ -147,8 +147,62 @@ Top-level settings:
   - `providers` - supported provider adapters (`openai-codex`, `anthropic`)
   - `display` - render quota windows as a mini `gauge` (default) or plain
     `text`
-  - `showCredits` - include provider-specific credit balance when available
+  - `showCredits` - include provider balances and credit metrics when available
   - `showReset` - include the primary reset time when available
+  - `customProviders` - declarative HTTP providers keyed by a stable provider ID
+
+### Declarative balance and quota providers
+
+Custom providers can query JSON APIs without extension code. The configuration key is matched against the active Pi provider ID; use `matchProviders` when they differ. Set `alwaysRefresh` only for providers that should refresh regardless of the active model.
+
+```json
+{
+  "providerStatus": {
+    "showCredits": true,
+    "showReset": true,
+    "customProviders": {
+      "zero": {
+        "label": "0-0",
+        "matchProviders": ["zero-proxy"],
+        "request": {
+          "url": "https://api.example.com/api/user/self",
+          "method": "GET",
+          "headers": {
+            "Authorization": "Bearer $ZERO_API_KEY"
+          },
+          "timeoutMs": 5000,
+          "maxResponseBytes": 1048576,
+          "followRedirects": false
+        },
+        "balances": [
+          {
+            "id": "remaining",
+            "selector": "data.quota",
+            "transform": {
+              "scale": 0.000002,
+              "round": 2
+            },
+            "currency": "CNY"
+          }
+        ],
+        "windows": [
+          {
+            "id": "monthly",
+            "label": "month",
+            "usedPercentSelector": "data.monthly.used_percent",
+            "resetAtSelector": "data.monthly.reset_at",
+            "timestampUnit": "seconds"
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+Selectors support object paths and array indexes, for example `data.quota` and `data.items[0].remaining`. Numeric transforms run in this order: `scale`, `offset`, `invertPercent`, `clamp`, then `round`. A quota window can select percentages or absolute `remaining`, `used`, and `limit` values and can set a unit such as `tokens` or `requests`.
+
+Requests support `GET` and JSON `POST` bodies. `$ENV_VAR` and `${ENV_VAR}` references are resolved in URLs, headers, and body strings. Missing variables are configuration errors. Responses must be JSON, are limited to 1 MiB by default, and time out after 5 seconds by default. Redirects are disabled unless explicitly enabled; authorization and cookie headers are removed when a redirect changes hosts. Raw responses and request credentials are never cached.
 
 Supported per-widget overrides for both `widgets` and `extensionWidgets`:
 

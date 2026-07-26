@@ -327,6 +327,49 @@ test("renderFooterLines shows Anthropic provider status for Claude models", () =
   assert.match(lines.join("\n"), /5h:100% 7d:92%/);
 });
 
+test("renderFooterLines reuses native gauges for declarative providers", () => {
+  const customProviderStatus: ProviderStatusSnapshot = {
+    provider: "zero",
+    label: "0-0",
+    source: "api",
+    fetchedAt: "2026-07-15T20:34:35Z",
+    windows: [
+      {
+        id: "monthly",
+        label: "月",
+        remainingPercent: 73,
+        usedPercent: 27,
+      },
+    ],
+    balances: [
+      { id: "remaining", value: 84.26, currency: "CNY" },
+    ],
+  };
+  const gaugeConfig: FooterConfigSnapshot = {
+    ...footerConfig,
+    gaugeStyle: "blocks",
+    providerStatus: {
+      ...footerConfig.providerStatus,
+      display: "gauge",
+      showCredits: true,
+    },
+  };
+
+  const lines = renderFooterLines(
+    120,
+    contextWithModel({ provider: "zero", id: "model", name: "Model" }) as never,
+    EMPTY_GIT_INFO,
+    "off",
+    theme as never,
+    usageMetrics,
+    gaugeConfig,
+    [],
+    [customProviderStatus],
+  );
+
+  assert.match(lines.join("\n"), /0-0 月 ■■■■□ 73% ¥84\.26/);
+});
+
 test("renderFooterLines hides Anthropic provider status for OpenAI models", () => {
   const lines = renderFooterLines(
     120,

@@ -24,6 +24,7 @@ const providerStatusConfig: ProviderStatusConfigSnapshot = {
   display: "gauge",
   showCredits: false,
   showReset: false,
+  customProviders: {},
 };
 const anthropicProviderStatusConfig: ProviderStatusConfigSnapshot = {
   ...providerStatusConfig,

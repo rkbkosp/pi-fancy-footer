@@ -54,17 +54,82 @@ export interface ProviderResourceSnapshot {
 
 export type ProviderStatusSnapshot = ProviderResourceSnapshot;
 
+export interface ProviderStatusFetchOptions {
+  signal?: AbortSignal;
+}
+
 export interface ProviderStatusSource {
   id: string;
   label: string;
   usageUrl: string;
   preserveMissingWindows: boolean;
+  kind?: "builtin" | "declarative";
+  cacheKey?: string;
+  alwaysRefresh?: boolean;
+  matchProviders?: readonly string[];
   supports(providerId: string): boolean;
-  fetch(pi: ExtensionAPI): Promise<ProviderResourceSnapshot>;
+  fetch(
+    pi: ExtensionAPI,
+    options?: ProviderStatusFetchOptions,
+  ): Promise<ProviderResourceSnapshot>;
   parseHeaders(
     headers: HeaderLike,
     now?: Date,
   ): ProviderResourceSnapshot | undefined;
+}
+
+export interface NumericTransform {
+  scale?: number;
+  offset?: number;
+  invertPercent?: boolean;
+  clamp?: [number, number];
+  round?: number;
+}
+
+export interface DeclarativeRequestConfig {
+  url: string;
+  method?: "GET" | "POST";
+  headers?: Record<string, string>;
+  body?: unknown;
+  timeoutMs?: number;
+  maxResponseBytes?: number;
+  followRedirects?: boolean;
+}
+
+export interface DeclarativeBalanceConfig {
+  id: string;
+  label?: string;
+  selector: string;
+  transform?: NumericTransform;
+  currency?: string;
+  unit?: string;
+  approximate?: boolean;
+}
+
+export type TimestampUnit = "seconds" | "milliseconds" | "iso8601";
+
+export interface DeclarativeWindowConfig {
+  id: string;
+  label: string;
+  remainingPercentSelector?: string;
+  usedPercentSelector?: string;
+  remainingSelector?: string;
+  usedSelector?: string;
+  limitSelector?: string;
+  transform?: NumericTransform;
+  unit?: string;
+  resetAtSelector?: string;
+  timestampUnit?: TimestampUnit;
+}
+
+export interface DeclarativeProviderConfig {
+  label?: string;
+  matchProviders?: string[];
+  alwaysRefresh?: boolean;
+  enabled?: boolean;
+  request: DeclarativeRequestConfig;
+  balances?: DeclarativeBalanceConfig[];
+  windows?: DeclarativeWindowConfig[];
 }
 
 export type ModelLike = {

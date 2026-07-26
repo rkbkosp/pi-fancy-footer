@@ -1,6 +1,9 @@
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
-import type { ProviderStatusSnapshot } from "./provider-status/types.ts";
+import type {
+  DeclarativeProviderConfig,
+  ProviderStatusSnapshot,
+} from "./provider-status/types.ts";
 
 export type ThinkingLevel = ModelThinkingLevel;
 
@@ -510,6 +513,7 @@ export interface ProviderStatusConfigSnapshot {
   display: ProviderStatusDisplay;
   showCredits: boolean;
   showReset: boolean;
+  customProviders: Record<string, DeclarativeProviderConfig>;
 }
 
 export const DEFAULT_PROVIDER_STATUS_CONFIG: ProviderStatusConfigSnapshot = {
@@ -519,6 +523,7 @@ export const DEFAULT_PROVIDER_STATUS_CONFIG: ProviderStatusConfigSnapshot = {
   display: "gauge",
   showCredits: false,
   showReset: false,
+  customProviders: {},
 };
 
 export const DEFAULT_FOOTER_CONFIG: FooterConfigSnapshot = {
