@@ -621,7 +621,10 @@ Notes:
   use and `84%` is the remaining weekly Codex quota. Codex uses existing pi
   OpenAI Codex credentials
   from `~/.pi/agent/auth.json`, falling back to Codex CLI credentials in
-  `~/.codex/auth.json`. Claude uses pi Anthropic OAuth credentials from
+  `~/.codex/auth.json`. Active cloned Codex providers such as `codex-my`
+  automatically use the OAuth entry with the same provider ID, keep a separate
+  quota cache, and show that account's weekly window instead of the source
+  provider's quota. Claude uses pi Anthropic OAuth credentials from
   `~/.pi/agent/auth.json` and reads Claude.ai usage for the 5-hour and weekly
   windows. Status is cached under `~/.cache/pi-fancy-footer/provider-status/`;
   when a refresh fails, cached quota windows keep showing until their reset times

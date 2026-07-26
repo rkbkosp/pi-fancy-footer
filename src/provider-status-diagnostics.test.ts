@@ -47,6 +47,13 @@ test("provider diagnostics list built-in, matched, and disabled sources", () => 
   assert.match(lines.join("\n"), /disabled\s+declarative disabled/);
 });
 
+test("provider diagnostics identify an active cloned Codex account", () => {
+  const lines = listProviderStatusSources(config("https://example.com"), {
+    provider: "codex-my",
+  });
+  assert.match(lines.join("\n"), /codex-my\s+Codex clone matched: codex-my/);
+});
+
 test("provider test diagnostics report selector counts without secrets", async (t) => {
   const server = createServer((_request, response) => {
     response.end(JSON.stringify({ data: { balance: 84.26 } }));

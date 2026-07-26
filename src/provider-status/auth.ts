@@ -13,7 +13,7 @@ type TokenRefreshResult =
   | { ok: false; error: Error };
 
 export interface AuthCredentials {
-  provider: "openai-codex" | "anthropic";
+  provider: string;
   source: "pi" | "codex";
   path: string;
   accessToken: string;
@@ -23,23 +23,27 @@ export interface AuthCredentials {
   raw: Record<string, unknown>;
 }
 
-export async function resolveCodexAuth(): Promise<AuthCredentials> {
+export async function resolveCodexAuth(
+  providerId = "openai-codex",
+): Promise<AuthCredentials> {
   const pi = await readAuthFile(
     "pi",
     homePath(".pi/agent/auth.json"),
-    "openai-codex",
+    providerId,
   );
   if (pi) return refreshIfNeeded(pi);
 
-  const codex = await readAuthFile(
-    "codex",
-    homePath(".codex/auth.json"),
-    "openai-codex",
-  );
-  if (codex) return refreshIfNeeded(codex);
+  if (providerId === "openai-codex") {
+    const codex = await readAuthFile(
+      "codex",
+      homePath(".codex/auth.json"),
+      providerId,
+    );
+    if (codex) return refreshIfNeeded(codex);
+  }
 
   throw new Error(
-    "No usable Codex OAuth credentials found. Run pi /login for OpenAI Codex or `codex login` first.",
+    `No usable Codex OAuth credentials found for ${providerId}. Run pi /login for that provider first.`,
   );
 }
 
@@ -151,7 +155,7 @@ async function requestTokenRefresh(
 async function readAuthFile(
   source: "pi" | "codex",
   path: string,
-  provider: AuthCredentials["provider"],
+  provider: string,
 ): Promise<AuthCredentials | undefined> {
   try {
     const raw = JSON.parse(await readFile(path, "utf8")) as unknown;
@@ -167,7 +171,7 @@ async function readAuthFile(
 function parsePiAuth(
   raw: Record<string, unknown>,
   path: string,
-  provider: AuthCredentials["provider"],
+  provider: string,
 ): AuthCredentials | undefined {
   const entry = objectValue(raw[provider]);
   const accessToken = stringValue(entry?.access);

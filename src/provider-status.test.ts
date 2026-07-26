@@ -173,6 +173,27 @@ test("parseCodexRateLimitHeaders accepts case-insensitive x-codex headers", () =
   assert.equal(providerStatusColor(snapshot), "error");
 });
 
+test("Codex parsing preserves cloned provider identity", () => {
+  const snapshot = normalizeCodexUsageResponse(
+    {
+      rate_limit: {
+        secondary_window: {
+          used_percent: 25,
+          limit_window_seconds: 604_800,
+        },
+      },
+    },
+    now,
+    "codex-my",
+    "codex-my",
+  );
+
+  assert.equal(snapshot?.provider, "codex-my");
+  assert.equal(snapshot?.label, "codex-my");
+  assert.equal(snapshot?.windows[0]?.label, "7d");
+  assert.equal(snapshot?.windows[0]?.remainingPercent, 75);
+});
+
 test("formatProviderStatusText keeps default output provider-neutral", () => {
   const snapshot = normalizeCodexUsageResponse(
     {
@@ -829,6 +850,30 @@ test("collectProviderStatus keeps cached quota in effect regardless of the failu
     new Date(futureResetAt * 1000).toISOString(),
   );
   assert.match(snapshot?.error?.message ?? "", /403/);
+});
+
+test("updateProviderStatusFromHeaders isolates cloned Codex accounts", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "provider-status-codex-clone-"));
+  const previousXdgCacheHome = process.env.XDG_CACHE_HOME;
+  process.env.XDG_CACHE_HOME = join(dir, "cache");
+  t.after(async () => {
+    if (previousXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
+    else process.env.XDG_CACHE_HOME = previousXdgCacheHome;
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const [snapshot] = await updateProviderStatusFromHeaders(
+    {
+      "x-codex-secondary-used-percent": "20",
+      "x-codex-secondary-window-minutes": "10080",
+    },
+    providerStatusConfig,
+    { provider: "codex-my", id: "gpt-5.4" },
+  );
+
+  assert.equal(snapshot?.provider, "codex-my");
+  assert.equal(snapshot?.windows[0]?.label, "7d");
+  assert.equal(snapshot?.windows[0]?.remainingPercent, 80);
 });
 
 test("updateProviderStatusFromHeaders honors disabled providers", async () => {

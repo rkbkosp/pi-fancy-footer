@@ -24,6 +24,8 @@ import {
   CODEX_SECONDARY_WINDOW_LABEL,
   CODEX_SOURCE,
   CODEX_USAGE_URL,
+  createCodexSource,
+  isCodexProviderId,
   normalizeCodexUsageResponse,
   parseCodexRateLimitHeaders,
 } from "./sources/codex.ts";
@@ -140,6 +142,23 @@ function enabledProviderStatusSources(
     return source ? [source] : [];
   });
   const currentProvider = currentProviderId(model);
+  if (
+    currentProvider &&
+    config.providers.includes(CODEX_SOURCE.id) &&
+    !CODEX_SOURCE.supports(currentProvider) &&
+    isCodexProviderId(currentProvider)
+  ) {
+    const baseIndex = enabled.findIndex(
+      (source) => source.id === CODEX_SOURCE.id,
+    );
+    if (baseIndex >= 0) {
+      enabled.splice(
+        baseIndex,
+        1,
+        createCodexSource(currentProvider, currentProvider),
+      );
+    }
+  }
   for (const id of Object.keys(config.customProviders)) {
     const source = registry.get(id);
     if (!source || enabled.includes(source)) continue;
@@ -261,8 +280,15 @@ export async function collectProviderStatus(
   options: CollectProviderStatusOptions = {},
 ): Promise<ProviderStatusSnapshot[]> {
   const registry = createProviderStatusRegistry(config.customProviders);
+  const requestedSource = options.providerId
+    ? (registry.get(options.providerId) ??
+      (config.providers.includes(CODEX_SOURCE.id) &&
+      isCodexProviderId(options.providerId)
+        ? createCodexSource(options.providerId, options.providerId)
+        : undefined))
+    : undefined;
   const sources = options.providerId
-    ? [registry.get(options.providerId)].filter(
+    ? [requestedSource].filter(
         (source): source is ProviderStatusSource => source !== undefined,
       )
     : enabledProviderStatusSources(config, model);
@@ -394,9 +420,10 @@ function providerStatusError(error: unknown) {
 export async function updateProviderStatusFromHeaders(
   headers: HeaderLike,
   config?: ProviderStatusConfigSnapshot,
+  model?: ModelLike | string,
 ): Promise<ProviderStatusSnapshot[]> {
   const sources = config
-    ? enabledProviderStatusSources(config)
+    ? enabledProviderStatusSources(config, model)
     : PROVIDER_STATUS_SOURCES;
 
   const updated: ProviderStatusSnapshot[] = [];
@@ -470,7 +497,7 @@ function windowDurationMinutes(label: string): number {
 
 function isWeeklyOnlyCodexStatus(snapshot: ProviderStatusSnapshot): boolean {
   return (
-    snapshot.provider === CODEX_SOURCE.id &&
+    isCodexProviderId(snapshot.provider) &&
     snapshot.windows.length === 1 &&
     snapshot.windows[0]?.label === CODEX_SECONDARY_WINDOW_LABEL
   );
@@ -507,7 +534,7 @@ export function formatProviderBalance(
   snapshot: ProviderStatusSnapshot,
   balance: BalanceMetric,
 ): string {
-  if (snapshot.provider === "openai-codex" && balance.id === "credits") {
+  if (isCodexProviderId(snapshot.provider) && balance.id === "credits") {
     return `cr:${balance.approximate ? "≈" : ""}${balance.value}`;
   }
   return formatBalanceMetric(balance);

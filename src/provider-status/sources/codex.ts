@@ -1,4 +1,3 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { refreshAuth, resolveCodexAuth } from "../auth.ts";
 import {
   normalizeResetAt,
@@ -21,21 +20,37 @@ const CODEX_USAGE_ENDPOINT = "https://chatgpt.com/backend-api/wham/usage";
 export const CODEX_PRIMARY_WINDOW_LABEL = "5h";
 export const CODEX_SECONDARY_WINDOW_LABEL = "7d";
 
-export const CODEX_SOURCE: ProviderStatusSource = {
-  id: "openai-codex",
-  label: "Codex",
-  usageUrl: CODEX_USAGE_URL,
-  preserveMissingWindows: false,
-  kind: "builtin",
-  supports: (providerId) =>
-    providerId === "openai-codex" || providerId === "openai",
-  fetch: fetchCodexProviderStatus,
-  parseHeaders: parseCodexRateLimitHeaders,
-};
+export function isCodexProviderId(providerId: string): boolean {
+  const normalized = providerId.trim().toLowerCase();
+  return normalized === "openai" || normalized.includes("codex");
+}
+
+export function createCodexSource(
+  providerId = "openai-codex",
+  label = providerId === "openai-codex" ? "Codex" : providerId,
+): ProviderStatusSource {
+  return {
+    id: providerId,
+    label,
+    usageUrl: CODEX_USAGE_URL,
+    preserveMissingWindows: false,
+    kind: "builtin",
+    supports: (candidate) =>
+      candidate === providerId ||
+      (providerId === "openai-codex" && candidate === "openai"),
+    fetch: (_pi, _context) => fetchCodexProviderStatus(providerId, label),
+    parseHeaders: (headers) =>
+      parseCodexRateLimitHeaders(headers, new Date(), providerId, label),
+  };
+}
+
+export const CODEX_SOURCE: ProviderStatusSource = createCodexSource();
 
 export function parseCodexRateLimitHeaders(
   headers: HeaderLike,
   now = new Date(),
+  providerId = "openai-codex",
+  label = providerId === "openai-codex" ? "Codex" : providerId,
 ): ProviderStatusSnapshot | undefined {
   const primary = parseHeaderWindow(
     headers,
@@ -53,8 +68,8 @@ export function parseCodexRateLimitHeaders(
   if (!primary && !secondary && credits === undefined) return undefined;
 
   return {
-    provider: "openai-codex",
-    label: "Codex",
+    provider: providerId,
+    label,
     source: "headers",
     fetchedAt: now.toISOString(),
     windows: [primary, secondary].filter(
@@ -71,6 +86,8 @@ export function parseCodexRateLimitHeaders(
 export function normalizeCodexUsageResponse(
   value: unknown,
   now = new Date(),
+  providerId = "openai-codex",
+  label = providerId === "openai-codex" ? "Codex" : providerId,
 ): ProviderStatusSnapshot | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return undefined;
@@ -93,8 +110,8 @@ export function normalizeCodexUsageResponse(
   if (!primary && !secondary && credits === undefined) return undefined;
 
   return {
-    provider: "openai-codex",
-    label: "Codex",
+    provider: providerId,
+    label,
     source: "api",
     fetchedAt: now.toISOString(),
     windows: [primary, secondary].filter(
@@ -109,9 +126,10 @@ export function normalizeCodexUsageResponse(
 }
 
 async function fetchCodexProviderStatus(
-  _pi: ExtensionAPI,
+  providerId: string,
+  label: string,
 ): Promise<ProviderStatusSnapshot> {
-  let auth = await resolveCodexAuth();
+  let auth = await resolveCodexAuth(providerId);
 
   for (let attempt = 0; attempt < 2; attempt++) {
     const response = await fetch(CODEX_USAGE_ENDPOINT, {
@@ -125,7 +143,12 @@ async function fetchCodexProviderStatus(
     const text = await response.text();
 
     if (response.ok) {
-      const parsed = normalizeCodexUsageResponse(JSON.parse(text));
+      const parsed = normalizeCodexUsageResponse(
+        JSON.parse(text),
+        new Date(),
+        providerId,
+        label,
+      );
       if (parsed) return parsed;
       throw new Error("Codex usage response did not contain quota data");
     }

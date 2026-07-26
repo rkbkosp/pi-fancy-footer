@@ -596,12 +596,13 @@ export default async function (pi: ExtensionAPI) {
     },
   });
 
-  pi.on("after_provider_response", async (event) => {
+  pi.on("after_provider_response", async (event, ctx) => {
     if (footerConfig.widgets["provider-status"]?.enabled === false) return;
 
     const updated = await updateProviderStatusFromHeaders(
       event.headers ?? {},
       footerConfig.providerStatus,
+      ctx.model,
     );
     for (const snapshot of updated) {
       activeFooterControls?.updateProviderStatus(snapshot);

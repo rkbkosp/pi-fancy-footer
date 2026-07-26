@@ -5,6 +5,11 @@ import {
   createProviderStatusRegistry,
   formatProviderStatusText,
 } from "./index.ts";
+import {
+  CODEX_SOURCE,
+  createCodexSource,
+  isCodexProviderId,
+} from "./sources/codex.ts";
 import { fetchDeclarativeProvider } from "./sources/declarative.ts";
 import type { ModelLike, ProviderStatusSnapshot } from "./types.ts";
 
@@ -13,10 +18,21 @@ export function listProviderStatusSources(
   model?: ModelLike | string,
 ): string[] {
   const currentProvider = modelProviderId(model);
+  const codexEnabled = config.providers.includes("openai-codex");
   const lines = [
-    builtinLine("openai-codex", config.providers.includes("openai-codex")),
+    builtinLine("openai-codex", codexEnabled),
     builtinLine("anthropic", config.providers.includes("anthropic")),
   ];
+  if (
+    codexEnabled &&
+    currentProvider &&
+    !CODEX_SOURCE.supports(currentProvider) &&
+    isCodexProviderId(currentProvider)
+  ) {
+    lines.push(
+      `${currentProvider.padEnd(16)} Codex clone matched: ${currentProvider}`,
+    );
+  }
   for (const [id, provider] of Object.entries(config.customProviders)) {
     const enabled = provider.enabled !== false;
     let match = "unmatched";
@@ -59,8 +75,14 @@ export async function testProviderStatusSource(
   }
 
   const registry = createProviderStatusRegistry(config.customProviders);
-  const source = registry.get(providerId);
-  if (!source || !config.providers.includes(providerId)) {
+  const isCodexClone =
+    config.providers.includes(CODEX_SOURCE.id) &&
+    !CODEX_SOURCE.supports(providerId) &&
+    isCodexProviderId(providerId);
+  const source =
+    registry.get(providerId) ??
+    (isCodexClone ? createCodexSource(providerId, providerId) : undefined);
+  if (!source || (!config.providers.includes(providerId) && !isCodexClone)) {
     throw new Error(`Unknown or disabled provider: ${providerId}`);
   }
   const startedAt = Date.now();
@@ -79,7 +101,13 @@ export async function debugProviderStatusSource(
 ): Promise<string[]> {
   const custom = config.customProviders[providerId];
   const registry = createProviderStatusRegistry(config.customProviders);
-  const source = registry.get(providerId);
+  const source =
+    registry.get(providerId) ??
+    (config.providers.includes(CODEX_SOURCE.id) &&
+    !CODEX_SOURCE.supports(providerId) &&
+    isCodexProviderId(providerId)
+      ? createCodexSource(providerId, providerId)
+      : undefined);
   if (!source && !custom) throw new Error(`Unknown provider: ${providerId}`);
 
   const cacheKey = source?.cacheKey ?? providerId;
