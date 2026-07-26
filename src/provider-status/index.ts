@@ -12,6 +12,7 @@ import {
   writeProviderStatusCache,
 } from "./cache.ts";
 import { computeProviderStatusState, remainingPercent } from "./normalize.ts";
+import { ProviderStatusRegistry } from "./registry.ts";
 import {
   ANTHROPIC_SOURCE,
   CLAUDE_USAGE_URL,
@@ -35,6 +36,7 @@ import type {
 
 export {
   CLAUDE_USAGE_URL,
+  ProviderStatusRegistry,
   CODEX_USAGE_URL,
   isProviderStatusFresh,
   normalizeClaudeUsageResponse,
@@ -50,10 +52,17 @@ export type {
   QuotaWindow,
 } from "./types.ts";
 
-export const PROVIDER_STATUS_SOURCES: readonly ProviderStatusSource[] = [
-  CODEX_SOURCE,
-  ANTHROPIC_SOURCE,
-];
+export function createProviderStatusRegistry(): ProviderStatusRegistry {
+  const registry = new ProviderStatusRegistry();
+  registry.register(CODEX_SOURCE);
+  registry.register(ANTHROPIC_SOURCE);
+  return registry;
+}
+
+const PROVIDER_STATUS_REGISTRY = createProviderStatusRegistry();
+
+export const PROVIDER_STATUS_SOURCES: readonly ProviderStatusSource[] =
+  PROVIDER_STATUS_REGISTRY.list();
 
 function modelValue(value: unknown): string {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
@@ -115,9 +124,10 @@ export function isProviderStatusRelevantToModel(
 function enabledProviderStatusSources(
   config: Pick<ProviderStatusConfigSnapshot, "providers">,
 ): readonly ProviderStatusSource[] {
-  return PROVIDER_STATUS_SOURCES.filter((source) =>
-    config.providers.includes(source.id),
-  );
+  return config.providers.flatMap((id) => {
+    const source = PROVIDER_STATUS_REGISTRY.get(id);
+    return source ? [source] : [];
+  });
 }
 
 export function formatProviderStatusText(

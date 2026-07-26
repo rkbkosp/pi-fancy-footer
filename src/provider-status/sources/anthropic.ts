@@ -24,6 +24,7 @@ export const ANTHROPIC_SOURCE: ProviderStatusSource = {
   label: "Claude",
   usageUrl: CLAUDE_USAGE_URL,
   preserveMissingWindows: true,
+  supports: (providerId) => providerId === "anthropic",
   fetch: fetchClaudeProviderStatus,
   parseHeaders: () => undefined,
 };

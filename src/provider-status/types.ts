@@ -59,6 +59,7 @@ export interface ProviderStatusSource {
   label: string;
   usageUrl: string;
   preserveMissingWindows: boolean;
+  supports(providerId: string): boolean;
   fetch(pi: ExtensionAPI): Promise<ProviderResourceSnapshot>;
   parseHeaders(
     headers: HeaderLike,
