@@ -62,8 +62,10 @@ pi install npm:pi-fancy-footer
     - Enter - open widget-specific settings (visibility, icon, icon color,
       text color, min width)
   - arrow down past the widgets to reach the General settings (refresh,
-    icon family, gauge style/width/colors, default colors); Enter/Space
-    cycles values
+    icon family, gauge style/width/colors, default colors, and declarative
+    provider enablement/order); Enter/Space cycles values
+  - declarative provider credentials and request definitions remain JSON-only;
+    the editor never displays secret values
 - `/fancy-footer provider list` - list built-in and declarative status sources
 - `/fancy-footer provider refresh [provider]` - bypass the TTL cache and refresh all matched sources or one provider
 - `/fancy-footer provider test <provider>` - make a real request and report HTTP, latency, selector, and normalized-result diagnostics

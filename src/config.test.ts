@@ -2,8 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   footerConfigValidationErrors,
+  genericFooterSettingsItems,
+  moveCustomProviderToIndex,
   plainSettingValue,
+  setCustomProviderEnabled,
 } from "./config.ts";
+import { DEFAULT_FOOTER_CONFIG } from "./shared.ts";
 
 test("footerConfigValidationErrors accepts a valid config", () => {
   assert.deepEqual(
@@ -61,8 +65,43 @@ test("footerConfigValidationErrors accepts partial gaugeColors", () => {
     footerConfigValidationErrors({ gaugeColors: { ok: "dim" } }),
     [],
   );
-  assert.deepEqual(footerConfigValidationErrors({ gaugeColors: { okay: "dim" } }), [
-    '  - /gaugeColors: unknown key "okay" (did you mean "ok"?)',
+  assert.deepEqual(
+    footerConfigValidationErrors({ gaugeColors: { okay: "dim" } }),
+    ['  - /gaugeColors: unknown key "okay" (did you mean "ok"?)'],
+  );
+});
+
+test("custom provider settings expose enablement and order without secrets", () => {
+  const config = structuredClone(DEFAULT_FOOTER_CONFIG);
+  config.providerStatus.customProviders = {
+    alpha: {
+      request: {
+        url: "https://example.com/alpha",
+        headers: { Authorization: "Bearer secret-value" },
+      },
+      balances: [{ id: "credits", selector: "credits" }],
+    },
+    beta: {
+      label: "Beta",
+      enabled: false,
+      request: { url: "https://example.com/beta" },
+      balances: [{ id: "credits", selector: "credits" }],
+    },
+  };
+  const theme = { fg: (_color: string, text: string) => text };
+  const items = genericFooterSettingsItems(config, theme as never);
+  const output = JSON.stringify(items);
+
+  assert.match(output, /provider alpha/);
+  assert.match(output, /provider Beta/);
+  assert.doesNotMatch(output, /secret-value|Authorization/);
+
+  setCustomProviderEnabled(config, "beta", true);
+  assert.equal(config.providerStatus.customProviders.beta?.enabled, undefined);
+  moveCustomProviderToIndex(config, "beta", 0);
+  assert.deepEqual(Object.keys(config.providerStatus.customProviders), [
+    "beta",
+    "alpha",
   ]);
 });
 

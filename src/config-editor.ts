@@ -10,7 +10,9 @@ import {
 import {
   buildConfigurableWidgets,
   genericFooterSettingsItems,
+  moveCustomProviderToIndex,
   plainSettingValue,
+  setCustomProviderEnabled,
   widgetSettingsSubmenu,
   type ConfigurableWidgetMeta,
 } from "./config.ts";
@@ -165,7 +167,8 @@ export async function openFooterConfigEditor({
       if (index < 0) return;
       const chips = navRowChips(rows[index]!);
       const chipIndex = chips.findIndex(
-        (chip) => chip.widget.id === (selection as { widgetId: string }).widgetId,
+        (chip) =>
+          chip.widget.id === (selection as { widgetId: string }).widgetId,
       );
       const next = chips[chipIndex + direction];
       if (next) selectChip(next);
@@ -255,6 +258,20 @@ export async function openFooterConfigEditor({
     // ── globals mutation (value cycling) ─────────────────────────────
 
     const setGenericField = (fieldId: string, newValue: string) => {
+      if (fieldId.startsWith("customProviderEnabled:")) {
+        const providerId = fieldId.slice("customProviderEnabled:".length);
+        setCustomProviderEnabled(draft, providerId, newValue === "enabled");
+        return;
+      }
+      if (fieldId.startsWith("customProviderOrder:")) {
+        const providerId = fieldId.slice("customProviderOrder:".length);
+        const order = Number(newValue);
+        if (Number.isInteger(order)) {
+          moveCustomProviderToIndex(draft, providerId, order - 1);
+        }
+        return;
+      }
+
       switch (fieldId) {
         case "refreshMs": {
           const parsed = Number(newValue);
@@ -314,9 +331,15 @@ export async function openFooterConfigEditor({
       if (!item?.values || item.values.length === 0) return;
       const currentIndex = item.values.indexOf(item.currentValue);
       const nextValue =
-        item.values[(currentIndex + 1 + item.values.length) % item.values.length];
+        item.values[
+          (currentIndex + 1 + item.values.length) % item.values.length
+        ];
       if (nextValue === undefined) return;
       setGenericField(item.id, nextValue);
+      const nextIndex = globalsItems().findIndex(
+        (candidate) => candidate.id === item.id,
+      );
+      if (nextIndex >= 0) selection = { area: "globals", index: nextIndex };
       applyDraft();
     };
 
@@ -365,8 +388,7 @@ export async function openFooterConfigEditor({
       if (mode === "icon") return theme.fg(iconColor, icon);
       const label =
         mode === "full" ? chip.widget.label : chip.widget.shortLabel;
-      const grow =
-        chip.placement.fill === "grow" ? theme.fg("dim", " ↔") : "";
+      const grow = chip.placement.fill === "grow" ? theme.fg("dim", " ↔") : "";
       return `${theme.fg(iconColor, icon)} ${label}${grow}`;
     };
 

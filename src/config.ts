@@ -480,6 +480,36 @@ export function cloneFooterConfig(
   return structuredClone(config);
 }
 
+export function getLastFooterConfigError(): string | undefined {
+  return lastFooterConfigError;
+}
+
+export function setCustomProviderEnabled(
+  config: FooterConfigSnapshot,
+  providerId: string,
+  enabled: boolean,
+): void {
+  const provider = config.providerStatus.customProviders[providerId];
+  if (!provider) return;
+  if (enabled) delete provider.enabled;
+  else provider.enabled = false;
+}
+
+export function moveCustomProviderToIndex(
+  config: FooterConfigSnapshot,
+  providerId: string,
+  targetIndex: number,
+): void {
+  const entries = Object.entries(config.providerStatus.customProviders);
+  const currentIndex = entries.findIndex(([id]) => id === providerId);
+  if (currentIndex < 0) return;
+  const [entry] = entries.splice(currentIndex, 1);
+  if (!entry) return;
+  const boundedIndex = Math.max(0, Math.min(entries.length, targetIndex));
+  entries.splice(boundedIndex, 0, entry);
+  config.providerStatus.customProviders = Object.fromEntries(entries);
+}
+
 function isEmptyWidgetOverride(
   override: FooterWidgetConfigOverride | undefined,
 ): boolean {
@@ -839,7 +869,7 @@ export function genericFooterSettingsItems(
     ]),
   ).sort((a, b) => Number(a) - Number(b));
 
-  return [
+  const items: SettingItem[] = [
     {
       id: "refreshMs",
       label: "refresh interval (ms)",
@@ -921,4 +951,38 @@ export function genericFooterSettingsItems(
         "Choose the default icon color for widgets. You can still change individual widgets.",
     },
   ];
+
+  const providers = Object.entries(draft.providerStatus.customProviders);
+  for (const [index, [providerId, provider]] of providers.entries()) {
+    items.push(
+      {
+        id: `customProviderEnabled:${providerId}`,
+        label: `provider ${provider.label ?? providerId}`,
+        currentValue: provider.enabled === false ? "disabled" : "enabled",
+        values: ["enabled", "disabled"],
+        description:
+          "Enable or disable this declarative provider. Request credentials remain in the JSON config and are not shown here.",
+      },
+      {
+        id: `customProviderOrder:${providerId}`,
+        label: `provider ${provider.label ?? providerId} order`,
+        currentValue: String(index + 1),
+        values: providers.map((_, providerIndex) => String(providerIndex + 1)),
+        description:
+          "Choose this provider's display and refresh order among declarative providers.",
+      },
+    );
+  }
+
+  if (lastFooterConfigError) {
+    items.push({
+      id: "configError",
+      label: "configuration error",
+      currentValue: "invalid",
+      values: [],
+      description: lastFooterConfigError,
+    });
+  }
+
+  return items;
 }
