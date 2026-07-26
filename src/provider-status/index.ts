@@ -3,8 +3,6 @@ import {
   type GaugeSegment,
   type GaugeStyleDef,
   type ProviderStatusConfigSnapshot,
-  type ProviderStatusSnapshot,
-  type ProviderStatusWindow,
   buildGauge,
   formatGaugePercent,
 } from "../shared.ts";
@@ -13,7 +11,7 @@ import {
   readProviderStatusCache,
   writeProviderStatusCache,
 } from "./cache.ts";
-import { computeProviderStatusState } from "./normalize.ts";
+import { computeProviderStatusState, remainingPercent } from "./normalize.ts";
 import {
   ANTHROPIC_SOURCE,
   CLAUDE_USAGE_URL,
@@ -27,9 +25,12 @@ import {
   parseCodexRateLimitHeaders,
 } from "./sources/codex.ts";
 import type {
+  BalanceMetric,
   HeaderLike,
   ModelLike,
+  ProviderStatusSnapshot,
   ProviderStatusSource,
+  QuotaWindow,
 } from "./types.ts";
 
 export {
@@ -40,7 +41,14 @@ export {
   normalizeCodexUsageResponse,
   parseCodexRateLimitHeaders,
 };
-export type { ProviderStatusSource };
+export type {
+  BalanceMetric,
+  ProviderResourceSnapshot,
+  ProviderStatusError,
+  ProviderStatusSnapshot,
+  ProviderStatusSource,
+  QuotaWindow,
+} from "./types.ts";
 
 export const PROVIDER_STATUS_SOURCES: readonly ProviderStatusSource[] = [
   CODEX_SOURCE,
@@ -118,29 +126,24 @@ export function formatProviderStatusText(
 ): string {
   if (!snapshot) return "";
   if (
-    snapshot.state === "unavailable" &&
-    (!config.showCredits || !snapshot.credits)
+    snapshot.windows.length === 0 &&
+    (!config.showCredits || snapshot.balances.length === 0)
   ) {
     return "";
   }
 
-  const parts: string[] = [];
-  if (snapshot.primary) {
-    parts.push(
-      `${snapshot.primary.label}:${formatGaugePercent(snapshot.primary.leftPercent)}`,
-    );
-  }
-  if (snapshot.secondary) {
-    parts.push(
-      `${snapshot.secondary.label}:${formatGaugePercent(snapshot.secondary.leftPercent)}`,
-    );
-  }
-  if (config.showReset && snapshot.primary?.resetAt) {
-    const reset = formatReset(snapshot.primary.resetAt);
+  const parts = snapshot.windows.flatMap((window) => {
+    const left = remainingPercent(window);
+    return left === undefined
+      ? []
+      : [`${window.label}:${formatGaugePercent(left)}`];
+  });
+  if (config.showReset && snapshot.windows[0]?.resetAt) {
+    const reset = formatReset(snapshot.windows[0].resetAt);
     if (reset) parts.push(`reset:${reset}`);
   }
-  if (config.showCredits && snapshot.credits) {
-    parts.push(`cr:${snapshot.credits}`);
+  if (config.showCredits) {
+    parts.push(...snapshot.balances.map(formatLegacyBalance));
   }
 
   return parts.join(" ");
@@ -149,13 +152,16 @@ export function formatProviderStatusText(
 export function providerStatusColor(
   snapshot: ProviderStatusSnapshot | undefined,
 ): "success" | "warning" | "error" | "dim" {
-  if (!snapshot || snapshot.state === "unavailable") return "dim";
-  if (snapshot.state === "error") return "error";
-  if (snapshot.state === "warning") return "warning";
+  if (!snapshot) return "dim";
+  const state = computeProviderStatusState(snapshot.windows);
+  if (state === "unavailable") return "dim";
+  if (state === "error") return "error";
+  if (state === "warning") return "warning";
   return "success";
 }
 
 export interface ProviderStatusGaugeSegment extends GaugeSegment {
+  id: string;
   label: string;
 }
 
@@ -165,27 +171,28 @@ export function buildProviderStatusGauge(
   cells: number,
 ): ProviderStatusGaugeSegment[] {
   if (!snapshot) return [];
-  const segments: ProviderStatusGaugeSegment[] = [];
-  for (const window of [snapshot.primary, snapshot.secondary]) {
-    if (!window) continue;
-    segments.push({
-      label: window.label,
-      ...buildGauge(window.leftPercent, style, cells),
-    });
-  }
-  return segments;
+  return snapshot.windows.flatMap((window) => {
+    const left = remainingPercent(window);
+    if (left === undefined) return [];
+    return [
+      {
+        id: window.id,
+        label: window.label,
+        ...buildGauge(left, style, cells),
+      },
+    ];
+  });
 }
 
 export async function collectProviderStatus(
   pi: ExtensionAPI,
   config: ProviderStatusConfigSnapshot,
 ): Promise<ProviderStatusSnapshot[]> {
-  const snapshots = await Promise.all(
+  return Promise.all(
     enabledProviderStatusSources(config).map((source) =>
       collectProviderStatusFromSource(pi, source, config),
     ),
   );
-  return snapshots;
 }
 
 async function collectProviderStatusFromSource(
@@ -207,7 +214,7 @@ async function collectProviderStatusFromSource(
     const merged = source.preserveMissingWindows
       ? mergeProviderStatus(displayableCachedStatus(cached), fresh)
       : fresh;
-    const { error: _staleError, ...snapshot } = merged;
+    const { error: _staleError, stale: _stale, ...snapshot } = merged;
     await writeProviderStatusCache(snapshot).catch(() => undefined);
     return snapshot;
   } catch (error) {
@@ -230,39 +237,27 @@ function displayableCachedStatus(
 ): ProviderStatusSnapshot | undefined {
   if (!cached) return undefined;
 
-  const primary = windowInEffect(cached.primary, now);
-  const secondary = windowInEffect(cached.secondary, now);
-  if (!primary && !secondary) return undefined;
+  const windows = cached.windows.filter((window) =>
+    windowInEffect(window, now),
+  );
+  if (windows.length === 0) return undefined;
 
-  const {
-    primary: _expiredPrimary,
-    secondary: _expiredSecondary,
-    ...rest
-  } = cached;
   return {
-    ...rest,
+    ...cached,
     source: "cache",
-    state: computeProviderStatusState(primary, secondary),
-    ...(primary ? { primary } : {}),
-    ...(secondary ? { secondary } : {}),
-    ...(error === undefined
-      ? {}
-      : { error: providerStatusErrorMessage(error) }),
+    windows,
+    stale: error !== undefined,
+    ...(error === undefined ? {} : { error: providerStatusError(error) }),
   };
 }
 
 // A window is in effect while its reset time is still in the future. Windows
 // without a reset time have no intrinsic lifetime, so they are not shown once
 // the refresh that would confirm them has failed.
-function windowInEffect(
-  window: ProviderStatusWindow | undefined,
-  now: Date,
-): ProviderStatusWindow | undefined {
-  if (!window?.resetAt) return undefined;
-  const resetAtMs = window.resetAt * 1000;
-  return Number.isFinite(resetAtMs) && resetAtMs > now.getTime()
-    ? window
-    : undefined;
+function windowInEffect(window: QuotaWindow, now: Date): boolean {
+  if (!window.resetAt) return false;
+  const resetAtMs = Date.parse(window.resetAt);
+  return Number.isFinite(resetAtMs) && resetAtMs > now.getTime();
 }
 
 function unavailableProviderStatus(
@@ -271,16 +266,21 @@ function unavailableProviderStatus(
 ): ProviderStatusSnapshot {
   return {
     provider: source.id,
+    label: source.label,
     source: "api",
     fetchedAt: new Date().toISOString(),
-    state: "unavailable",
+    windows: [],
+    balances: [],
     url: source.usageUrl,
-    error: providerStatusErrorMessage(error),
+    error: providerStatusError(error),
   };
 }
 
-function providerStatusErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+function providerStatusError(error: unknown) {
+  return {
+    code: "unknown" as const,
+    message: error instanceof Error ? error.message : String(error),
+  };
 }
 
 export async function updateProviderStatusFromHeaders(
@@ -305,8 +305,7 @@ export async function updateProviderStatusFromHeaders(
       // A duration-bearing weekly primary with no secondary is an explicit
       // weekly-only Codex layout, not a sparse update.
       preserveMissingWindows:
-        source.preserveMissingWindows ||
-        !isWeeklyOnlyCodexStatus(parsed),
+        source.preserveMissingWindows || !isWeeklyOnlyCodexStatus(parsed),
     });
     await writeProviderStatusCache(merged).catch(() => undefined);
     updated.push(merged);
@@ -322,50 +321,24 @@ function mergeProviderStatus(
   if (!existing) return update;
 
   const preserveMissingWindows = options.preserveMissingWindows ?? true;
-  const windows = new Map<string, ProviderStatusWindow>();
+  const windows = new Map<string, QuotaWindow>();
   if (preserveMissingWindows) {
-    for (const window of providerStatusWindows(existing)) {
-      windows.set(window.label, window);
-    }
+    for (const window of existing.windows) windows.set(window.id, window);
   }
-  for (const window of providerStatusWindows(update)) {
-    windows.set(window.label, window);
-  }
+  for (const window of update.windows) windows.set(window.id, window);
 
-  const [primary, secondary] = Array.from(windows.values()).sort(
-    (a, b) => windowDurationMinutes(a.label) - windowDurationMinutes(b.label),
-  );
-  const {
-    primary: _existingPrimary,
-    secondary: _existingSecondary,
-    credits: existingCredits,
-    error: _existingError,
-    ...existingBase
-  } = existing;
-  const {
-    primary: _updatePrimary,
-    secondary: _updateSecondary,
-    credits: updateCredits,
-    ...updateBase
-  } = update;
-  const credits = updateCredits ?? existingCredits;
+  const balances = new Map<string, BalanceMetric>();
+  for (const balance of existing.balances) balances.set(balance.id, balance);
+  for (const balance of update.balances) balances.set(balance.id, balance);
 
   return {
-    ...existingBase,
-    ...updateBase,
-    ...(primary ? { primary } : {}),
-    ...(secondary ? { secondary } : {}),
-    ...(credits !== undefined ? { credits } : {}),
-    state: computeProviderStatusState(primary, secondary),
+    ...existing,
+    ...update,
+    windows: Array.from(windows.values()).sort(
+      (a, b) => windowDurationMinutes(a.label) - windowDurationMinutes(b.label),
+    ),
+    balances: Array.from(balances.values()),
   };
-}
-
-function providerStatusWindows(
-  snapshot: ProviderStatusSnapshot,
-): ProviderStatusWindow[] {
-  return [snapshot.primary, snapshot.secondary].filter(
-    (window): window is ProviderStatusWindow => window !== undefined,
-  );
 }
 
 function windowDurationMinutes(label: string): number {
@@ -378,24 +351,32 @@ function windowDurationMinutes(label: string): number {
   return value;
 }
 
-function isWeeklyOnlyCodexStatus(
-  snapshot: ProviderStatusSnapshot,
-): boolean {
+function isWeeklyOnlyCodexStatus(snapshot: ProviderStatusSnapshot): boolean {
   return (
     snapshot.provider === CODEX_SOURCE.id &&
-    snapshot.primary?.label === CODEX_SECONDARY_WINDOW_LABEL &&
-    snapshot.secondary === undefined
+    snapshot.windows.length === 1 &&
+    snapshot.windows[0]?.label === CODEX_SECONDARY_WINDOW_LABEL
   );
 }
 
-export function formatProviderStatusReset(resetAt: number): string {
+export function formatProviderStatusReset(resetAt: string): string {
   return formatReset(resetAt);
 }
 
-function formatReset(resetAt: number): string {
-  const date = new Date(resetAt * 1000);
+function formatReset(resetAt: string): string {
+  const date = new Date(resetAt);
   if (!Number.isFinite(date.getTime())) return "";
   return `${String(date.getHours()).padStart(2, "0")}:${String(
     date.getMinutes(),
   ).padStart(2, "0")}`;
+}
+
+function formatLegacyBalance(balance: BalanceMetric): string {
+  const prefix = balance.approximate ? "≈" : "";
+  if (balance.id === "credits" || balance.unit === "credits") {
+    return `cr:${prefix}${balance.value}`;
+  }
+  return `${balance.label ?? balance.id}:${prefix}${balance.value}${
+    balance.unit ? ` ${balance.unit}` : ""
+  }`;
 }

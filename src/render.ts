@@ -80,17 +80,24 @@ function buildProviderStatusPart(
     const pieces = gauge.map(
       (segment) =>
         theme.fg(defaultTextColor, `${segment.label} `) +
-        theme.fg(gaugeColorFor(segment.color, gaugeColors), segment.filledGlyphs) +
+        theme.fg(
+          gaugeColorFor(segment.color, gaugeColors),
+          segment.filledGlyphs,
+        ) +
         theme.fg("dim", segment.emptyGlyphs) +
         theme.fg(defaultTextColor, ` ${segment.percentText}`),
     );
     const extras: string[] = [];
-    if (config.showReset && snapshot.primary?.resetAt) {
-      const reset = formatProviderStatusReset(snapshot.primary.resetAt);
+    if (config.showReset && snapshot.windows[0]?.resetAt) {
+      const reset = formatProviderStatusReset(snapshot.windows[0].resetAt);
       if (reset) extras.push(`reset:${reset}`);
     }
-    if (config.showCredits && snapshot.credits) {
-      extras.push(`cr:${snapshot.credits}`);
+    if (config.showCredits) {
+      for (const balance of snapshot.balances) {
+        if (balance.id === "credits" || balance.unit === "credits") {
+          extras.push(`cr:${balance.approximate ? "≈" : ""}${balance.value}`);
+        }
+      }
     }
     body =
       pieces.join(" ") +

@@ -1,11 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type {
-  ProviderStatusSnapshot,
-  ProviderStatusWindow,
-} from "../../shared.ts";
 import { refreshAuth, resolveClaudeAuth } from "../auth.ts";
 import {
-  computeProviderStatusState,
   numberString,
   numberValue,
   objectValue,
@@ -13,7 +8,11 @@ import {
   stringValue,
   windowFromUsedPercent,
 } from "../normalize.ts";
-import type { ProviderStatusSource } from "../types.ts";
+import type {
+  ProviderStatusSnapshot,
+  ProviderStatusSource,
+  QuotaWindow,
+} from "../types.ts";
 
 export const CLAUDE_USAGE_URL = "https://claude.ai/settings/usage";
 const CLAUDE_USAGE_ENDPOINT = "https://api.anthropic.com/api/oauth/usage";
@@ -50,11 +49,13 @@ export function normalizeClaudeUsageResponse(
 
   return {
     provider: "anthropic",
+    label: "Claude",
     source: "api",
     fetchedAt: now.toISOString(),
-    state: computeProviderStatusState(primary, secondary),
-    ...(primary ? { primary } : {}),
-    ...(secondary ? { secondary } : {}),
+    windows: [primary, secondary].filter(
+      (window): window is QuotaWindow => window !== undefined,
+    ),
+    balances: [],
     url: CLAUDE_USAGE_URL,
   };
 }
@@ -101,7 +102,7 @@ function normalizeClaudeUsageWindow(
   value: Record<string, unknown> | undefined,
   fallbackLabel: string,
   now: Date,
-): ProviderStatusWindow | undefined {
+): QuotaWindow | undefined {
   if (!value) return undefined;
   const usedPercent =
     numberValue(value.utilization) ??
@@ -109,6 +110,7 @@ function normalizeClaudeUsageWindow(
   if (usedPercent === undefined) return undefined;
 
   return windowFromUsedPercent(
+    fallbackLabel,
     fallbackLabel,
     usedPercent,
     resetAtFromTimestamp(stringValue(value.resets_at)),

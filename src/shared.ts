@@ -1,5 +1,6 @@
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import type { ProviderStatusSnapshot } from "./provider-status/types.ts";
 
 export type ThinkingLevel = ModelThinkingLevel;
 
@@ -269,26 +270,13 @@ export interface GitCounts {
 
 export type PullRequestCiState = "running" | "failed" | "okay";
 
-export interface ProviderStatusWindow {
-  label: string;
-  leftPercent: number;
-  usedPercent: number;
-  resetAt?: number;
-}
-
-export type ProviderStatusState = "ok" | "warning" | "error" | "unavailable";
-
-export interface ProviderStatusSnapshot {
-  provider: string;
-  source: "api" | "headers" | "cache";
-  fetchedAt: string;
-  state: ProviderStatusState;
-  primary?: ProviderStatusWindow;
-  secondary?: ProviderStatusWindow;
-  credits?: string;
-  url?: string;
-  error?: string;
-}
+export type {
+  BalanceMetric,
+  ProviderResourceSnapshot,
+  ProviderStatusError,
+  QuotaWindow,
+} from "./provider-status/types.ts";
+export type { ProviderStatusSnapshot };
 
 export interface GitHubPullRequest {
   number: number;
@@ -799,7 +787,9 @@ function parseGitHubHost(host: string): string {
   return "";
 }
 
-export function parseGitHubRemote(url: string): GitHubRepositoryRef | undefined {
+export function parseGitHubRemote(
+  url: string,
+): GitHubRepositoryRef | undefined {
   const trimmed = url.trim();
   const scpLike = trimmed.includes("://")
     ? undefined

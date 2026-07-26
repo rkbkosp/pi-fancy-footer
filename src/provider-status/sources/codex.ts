@@ -1,11 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type {
-  ProviderStatusSnapshot,
-  ProviderStatusWindow,
-} from "../../shared.ts";
 import { refreshAuth, resolveCodexAuth } from "../auth.ts";
 import {
-  computeProviderStatusState,
   normalizeResetAt,
   numberString,
   numberValue,
@@ -14,7 +9,12 @@ import {
   windowFromUsedPercent,
   windowLabelFromSeconds,
 } from "../normalize.ts";
-import type { HeaderLike, ProviderStatusSource } from "../types.ts";
+import type {
+  HeaderLike,
+  ProviderStatusSnapshot,
+  ProviderStatusSource,
+  QuotaWindow,
+} from "../types.ts";
 
 export const CODEX_USAGE_URL = "https://chatgpt.com/codex/settings/usage";
 const CODEX_USAGE_ENDPOINT = "https://chatgpt.com/backend-api/wham/usage";
@@ -46,17 +46,21 @@ export function parseCodexRateLimitHeaders(
     CODEX_SECONDARY_WINDOW_LABEL,
     now,
   );
-  const credits = headerValue(headers, "x-codex-credits-balance");
+  const credits = numberString(headerValue(headers, "x-codex-credits-balance"));
   if (!primary && !secondary && credits === undefined) return undefined;
 
   return {
     provider: "openai-codex",
+    label: "Codex",
     source: "headers",
     fetchedAt: now.toISOString(),
-    state: computeProviderStatusState(primary, secondary),
-    ...(primary ? { primary } : {}),
-    ...(secondary ? { secondary } : {}),
-    ...(credits ? { credits } : {}),
+    windows: [primary, secondary].filter(
+      (window): window is QuotaWindow => window !== undefined,
+    ),
+    balances:
+      credits === undefined
+        ? []
+        : [{ id: "credits", value: credits, unit: "credits" }],
     url: CODEX_USAGE_URL,
   };
 }
@@ -82,17 +86,21 @@ export function normalizeCodexUsageResponse(
     now,
   );
   const creditsObj = objectValue(obj.credits);
-  const credits = stringValue(creditsObj?.balance);
+  const credits = numberString(stringValue(creditsObj?.balance));
   if (!primary && !secondary && credits === undefined) return undefined;
 
   return {
     provider: "openai-codex",
+    label: "Codex",
     source: "api",
     fetchedAt: now.toISOString(),
-    state: computeProviderStatusState(primary, secondary),
-    ...(primary ? { primary } : {}),
-    ...(secondary ? { secondary } : {}),
-    ...(credits !== undefined ? { credits } : {}),
+    windows: [primary, secondary].filter(
+      (window): window is QuotaWindow => window !== undefined,
+    ),
+    balances:
+      credits === undefined
+        ? []
+        : [{ id: "credits", value: credits, unit: "credits" }],
     url: CODEX_USAGE_URL,
   };
 }
@@ -141,7 +149,7 @@ function parseHeaderWindow(
   prefix: string,
   label: string,
   now: Date,
-): ProviderStatusWindow | undefined {
+): QuotaWindow | undefined {
   const usedPercent = numberString(
     headerValue(headers, `${prefix}-used-percent`),
   );
@@ -156,8 +164,10 @@ function parseHeaderWindow(
     windowMinutes === undefined
       ? undefined
       : windowLabelFromSeconds(windowMinutes * 60);
+  const windowLabel = durationLabel ?? label;
   return windowFromUsedPercent(
-    durationLabel ?? label,
+    windowLabel,
+    windowLabel,
     usedPercent ?? 0,
     resetAt,
     now,
@@ -168,7 +178,7 @@ function normalizeApiWindow(
   value: Record<string, unknown> | undefined,
   fallbackLabel: string,
   now: Date,
-): ProviderStatusWindow | undefined {
+): QuotaWindow | undefined {
   if (!value) return undefined;
   const usedPercent = numberValue(value.used_percent);
   const resetAt = normalizeResetAt(numberValue(value.reset_at));
@@ -176,7 +186,7 @@ function normalizeApiWindow(
   const label =
     windowLabelFromSeconds(numberValue(value.limit_window_seconds)) ??
     fallbackLabel;
-  return windowFromUsedPercent(label, usedPercent ?? 0, resetAt, now);
+  return windowFromUsedPercent(label, label, usedPercent ?? 0, resetAt, now);
 }
 
 function headerValue(headers: HeaderLike, name: string): string | undefined {

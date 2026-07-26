@@ -24,31 +24,40 @@ const usageMetrics: SessionUsageMetrics = {
 
 const providerStatus: ProviderStatusSnapshot = {
   provider: "openai-codex",
+  label: "Codex",
   source: "headers",
   fetchedAt: "2026-05-06T10:00:00Z",
-  state: "ok",
-  primary: {
-    label: "5h",
-    leftPercent: 95,
-    usedPercent: 5,
-  },
+  windows: [
+    {
+      id: "5h",
+      label: "5h",
+      remainingPercent: 95,
+      usedPercent: 5,
+    },
+  ],
+  balances: [],
 };
 
 const claudeProviderStatus: ProviderStatusSnapshot = {
   provider: "anthropic",
+  label: "Claude",
   source: "api",
   fetchedAt: "2026-06-16T10:00:00Z",
-  state: "ok",
-  primary: {
-    label: "5h",
-    leftPercent: 100,
-    usedPercent: 0,
-  },
-  secondary: {
-    label: "7d",
-    leftPercent: 92,
-    usedPercent: 8,
-  },
+  windows: [
+    {
+      id: "5h",
+      label: "5h",
+      remainingPercent: 100,
+      usedPercent: 0,
+    },
+    {
+      id: "7d",
+      label: "7d",
+      remainingPercent: 92,
+      usedPercent: 8,
+    },
+  ],
+  balances: [],
 };
 
 const footerConfig: FooterConfigSnapshot = {
@@ -256,14 +265,18 @@ test("renderFooterLines shows Codex provider status for OpenAI models", () => {
 test("renderFooterLines renders a weekly-only Codex quota gauge", () => {
   const weeklyOnlyProviderStatus: ProviderStatusSnapshot = {
     provider: "openai-codex",
+    label: "Codex",
     source: "api",
     fetchedAt: "2026-07-15T20:34:35Z",
-    state: "ok",
-    primary: {
-      label: "7d",
-      leftPercent: 84,
-      usedPercent: 16,
-    },
+    windows: [
+      {
+        id: "7d",
+        label: "7d",
+        remainingPercent: 84,
+        usedPercent: 16,
+      },
+    ],
+    balances: [],
   };
   const gaugeConfig: FooterConfigSnapshot = {
     ...footerConfig,

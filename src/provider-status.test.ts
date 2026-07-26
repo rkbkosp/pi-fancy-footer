@@ -50,20 +50,22 @@ test("normalizeCodexUsageResponse extracts primary and secondary quota windows",
     now,
   );
 
-  assert.deepEqual(snapshot?.primary, {
+  assert.deepEqual(snapshot?.windows[0], {
+    id: "5h",
     label: "5h",
     usedPercent: 5,
-    leftPercent: 95,
-    resetAt: 1_778_064_000,
+    remainingPercent: 95,
+    resetAt: new Date(1_778_064_000 * 1000).toISOString(),
   });
-  assert.deepEqual(snapshot?.secondary, {
+  assert.deepEqual(snapshot?.windows[1], {
+    id: "7d",
     label: "7d",
     usedPercent: 12.5,
-    leftPercent: 87.5,
-    resetAt: 1_778_150_400,
+    remainingPercent: 87.5,
+    resetAt: new Date(1_778_150_400 * 1000).toISOString(),
   });
-  assert.equal(snapshot?.credits, "553.9");
-  assert.equal(snapshot?.state, "ok");
+  assert.equal(snapshot?.balances[0]?.value, 553.9);
+  assert.equal(providerStatusColor(snapshot), "success");
 });
 
 test("normalizeCodexUsageResponse accepts a promoted weekly-only primary window", () => {
@@ -81,13 +83,14 @@ test("normalizeCodexUsageResponse accepts a promoted weekly-only primary window"
     now,
   );
 
-  assert.deepEqual(snapshot?.primary, {
+  assert.deepEqual(snapshot?.windows[0], {
+    id: "7d",
     label: "7d",
     usedPercent: 16,
-    leftPercent: 84,
-    resetAt: 1_784_668_371,
+    remainingPercent: 84,
+    resetAt: new Date(1_784_668_371 * 1000).toISOString(),
   });
-  assert.equal(snapshot?.secondary, undefined);
+  assert.equal(snapshot?.windows[1], undefined);
 });
 
 test("normalizeClaudeUsageResponse extracts five-hour and weekly usage windows", () => {
@@ -114,20 +117,22 @@ test("normalizeClaudeUsageResponse extracts five-hour and weekly usage windows",
     now,
   );
 
-  assert.deepEqual(snapshot?.primary, {
+  assert.deepEqual(snapshot?.windows[0], {
+    id: "5h",
     label: "5h",
     usedPercent: 0,
-    leftPercent: 100,
-    resetAt: Math.round(Date.parse(fiveHourReset) / 1000),
+    remainingPercent: 100,
+    resetAt: new Date(fiveHourReset).toISOString(),
   });
-  assert.deepEqual(snapshot?.secondary, {
+  assert.deepEqual(snapshot?.windows[1], {
+    id: "7d",
     label: "7d",
     usedPercent: 8,
-    leftPercent: 92,
-    resetAt: Math.round(Date.parse(weeklyReset) / 1000),
+    remainingPercent: 92,
+    resetAt: new Date(weeklyReset).toISOString(),
   });
   assert.equal(snapshot?.provider, "anthropic");
-  assert.equal(snapshot?.state, "ok");
+  assert.equal(providerStatusColor(snapshot), "success");
 });
 
 test("normalizeClaudeUsageResponse ignores responses without supported windows", () => {
@@ -159,12 +164,12 @@ test("parseCodexRateLimitHeaders accepts case-insensitive x-codex headers", () =
     now,
   );
 
-  assert.equal(snapshot?.primary?.label, "5h");
-  assert.equal(snapshot?.primary?.leftPercent, 24);
-  assert.equal(snapshot?.secondary?.label, "7d");
-  assert.equal(snapshot?.secondary?.leftPercent, 90);
-  assert.equal(snapshot?.credits, "42");
-  assert.equal(snapshot?.state, "error");
+  assert.equal(snapshot?.windows[0]?.label, "5h");
+  assert.equal(snapshot?.windows[0]?.remainingPercent, 24);
+  assert.equal(snapshot?.windows[1]?.label, "7d");
+  assert.equal(snapshot?.windows[1]?.remainingPercent, 90);
+  assert.equal(snapshot?.balances[0]?.value, 42);
+  assert.equal(providerStatusColor(snapshot), "error");
 });
 
 test("formatProviderStatusText keeps default output provider-neutral", () => {
@@ -390,9 +395,9 @@ test("collectProviderStatus drops a cached Codex session window after a weekly-o
     cacheTtlMs: 1,
   });
 
-  assert.equal(snapshot?.primary?.label, "7d");
-  assert.equal(snapshot?.primary?.leftPercent, 84);
-  assert.equal(snapshot?.secondary, undefined);
+  assert.equal(snapshot?.windows[0]?.label, "7d");
+  assert.equal(snapshot?.windows[0]?.remainingPercent, 84);
+  assert.equal(snapshot?.windows[1], undefined);
 });
 
 test("collectProviderStatus does not present expired cache as live status after refresh failure", async (t) => {
@@ -442,9 +447,12 @@ test("collectProviderStatus does not present expired cache as live status after 
 
   assert.equal(snapshots.length, 1);
   const snapshot = snapshots[0];
-  assert.equal(snapshot?.state, "unavailable");
-  assert.equal(snapshot?.primary, undefined);
-  assert.match(snapshot?.error ?? "", /No usable Codex OAuth credentials/);
+  assert.equal(snapshot?.windows.length, 0);
+  assert.equal(providerStatusColor(snapshot), "dim");
+  assert.match(
+    snapshot?.error?.message ?? "",
+    /No usable Codex OAuth credentials/,
+  );
 });
 
 test("collectProviderStatus keeps cached quota in effect after a failed refresh", async (t) => {
@@ -516,20 +524,23 @@ test("collectProviderStatus keeps cached quota in effect after a failed refresh"
   assert.equal(snapshots.length, 1);
   const snapshot = snapshots[0];
   assert.equal(snapshot?.source, "cache");
-  assert.equal(snapshot?.state, "ok");
-  assert.deepEqual(snapshot?.primary, {
+  assert.equal(snapshot?.stale, true);
+  assert.equal(providerStatusColor(snapshot), "success");
+  assert.deepEqual(snapshot?.windows[0], {
+    id: "5h",
     label: "5h",
     usedPercent: 5,
-    leftPercent: 95,
-    resetAt: futureResetAt,
+    remainingPercent: 95,
+    resetAt: new Date(futureResetAt * 1000).toISOString(),
   });
-  assert.deepEqual(snapshot?.secondary, {
+  assert.deepEqual(snapshot?.windows[1], {
+    id: "7d",
     label: "7d",
     usedPercent: 12,
-    leftPercent: 88,
-    resetAt: futureResetAt,
+    remainingPercent: 88,
+    resetAt: new Date(futureResetAt * 1000).toISOString(),
   });
-  assert.match(snapshot?.error ?? "", /429/);
+  assert.match(snapshot?.error?.message ?? "", /429/);
 });
 
 test("collectProviderStatus retains a valid five-hour cache window after a partial refresh", async (t) => {
@@ -602,9 +613,9 @@ test("collectProviderStatus retains a valid five-hour cache window after a parti
     cacheTtlMs: 1,
   });
 
-  assert.equal(snapshot?.primary?.label, "5h");
-  assert.equal(snapshot?.secondary?.label, "7d");
-  assert.equal(snapshot?.secondary?.usedPercent, 7);
+  assert.equal(snapshot?.windows[0]?.label, "5h");
+  assert.equal(snapshot?.windows[1]?.label, "7d");
+  assert.equal(snapshot?.windows[1]?.usedPercent, 7);
   assert.equal(snapshot?.error, undefined);
 });
 
@@ -668,10 +679,9 @@ test("collectProviderStatus hides cached quota once its windows reset", async (t
   assert.equal(snapshots.length, 1);
   const snapshot = snapshots[0];
   assert.equal(snapshot?.source, "api");
-  assert.equal(snapshot?.state, "unavailable");
-  assert.equal(snapshot?.primary, undefined);
-  assert.equal(snapshot?.secondary, undefined);
-  assert.match(snapshot?.error ?? "", /429/);
+  assert.equal(snapshot?.windows.length, 0);
+  assert.equal(providerStatusColor(snapshot), "dim");
+  assert.match(snapshot?.error?.message ?? "", /429/);
 });
 
 test("collectProviderStatus keeps cached quota in effect after a failed auth refresh", async (t) => {
@@ -740,9 +750,13 @@ test("collectProviderStatus keeps cached quota in effect after a failed auth ref
   assert.equal(snapshots.length, 1);
   const snapshot = snapshots[0];
   assert.equal(snapshot?.source, "cache");
-  assert.equal(snapshot?.state, "ok");
-  assert.equal(snapshot?.primary?.resetAt, futureResetAt);
-  assert.match(snapshot?.error ?? "", /429/);
+  assert.equal(snapshot?.stale, true);
+  assert.equal(providerStatusColor(snapshot), "success");
+  assert.equal(
+    snapshot?.windows[0]?.resetAt,
+    new Date(futureResetAt * 1000).toISOString(),
+  );
+  assert.match(snapshot?.error?.message ?? "", /429/);
 });
 
 test("collectProviderStatus keeps cached quota in effect regardless of the failure cause", async (t) => {
@@ -807,9 +821,13 @@ test("collectProviderStatus keeps cached quota in effect regardless of the failu
   assert.equal(snapshots.length, 1);
   const snapshot = snapshots[0];
   assert.equal(snapshot?.source, "cache");
-  assert.equal(snapshot?.state, "ok");
-  assert.equal(snapshot?.primary?.resetAt, futureResetAt);
-  assert.match(snapshot?.error ?? "", /403/);
+  assert.equal(snapshot?.stale, true);
+  assert.equal(providerStatusColor(snapshot), "success");
+  assert.equal(
+    snapshot?.windows[0]?.resetAt,
+    new Date(futureResetAt * 1000).toISOString(),
+  );
+  assert.match(snapshot?.error?.message ?? "", /403/);
 });
 
 test("updateProviderStatusFromHeaders honors disabled providers", async () => {
@@ -890,9 +908,9 @@ test("updateProviderStatusFromHeaders clears a stale Codex session window for a 
     providerStatusConfig,
   );
 
-  assert.equal(snapshot?.primary?.label, "7d");
-  assert.equal(snapshot?.primary?.leftPercent, 84);
-  assert.equal(snapshot?.secondary, undefined);
+  assert.equal(snapshot?.windows[0]?.label, "7d");
+  assert.equal(snapshot?.windows[0]?.remainingPercent, 84);
+  assert.equal(snapshot?.windows[1], undefined);
 });
 
 test("updateProviderStatusFromHeaders does not merge expired cached windows", async (t) => {
@@ -939,9 +957,9 @@ test("updateProviderStatusFromHeaders does not merge expired cached windows", as
 
   assert.equal(updated.length, 1);
   const snapshot = updated[0];
-  assert.equal(snapshot?.primary, undefined);
-  assert.equal(snapshot?.credits, "42");
-  assert.equal(snapshot?.state, "unavailable");
+  assert.equal(snapshot?.windows[0], undefined);
+  assert.equal(snapshot?.balances[0]?.value, 42);
+  assert.equal(providerStatusColor(snapshot), "dim");
 });
 
 test("buildProviderStatusGauge renders battery-style cells per window", () => {
@@ -963,6 +981,7 @@ test("buildProviderStatusGauge renders battery-style cells per window", () => {
 
   assert.deepEqual(segments, [
     {
+      id: "5h",
       label: "5h",
       filledGlyphs: "▰▰▰▰",
       emptyGlyphs: "▱",
@@ -970,6 +989,7 @@ test("buildProviderStatusGauge renders battery-style cells per window", () => {
       color: "success",
     },
     {
+      id: "7d",
       label: "7d",
       filledGlyphs: "▰",
       emptyGlyphs: "▱▱▱▱",
@@ -1014,6 +1034,6 @@ test("normalizeCodexUsageResponse derives window labels from window seconds", ()
     now,
   );
 
-  assert.equal(snapshot?.primary?.label, "5h");
-  assert.equal(snapshot?.secondary?.label, "1d");
+  assert.equal(snapshot?.windows[0]?.label, "5h");
+  assert.equal(snapshot?.windows[1]?.label, "1d");
 });

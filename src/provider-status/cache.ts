@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { ProviderStatusSnapshot } from "../shared.ts";
+import { normalizeProviderResourceSnapshot } from "./normalize.ts";
+import type { ProviderStatusSnapshot } from "./types.ts";
 
 export async function readProviderStatusCache(
   providerId: string,
@@ -12,7 +13,7 @@ export async function readProviderStatusCache(
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       return undefined;
     }
-    return parsed as ProviderStatusSnapshot;
+    return normalizeProviderResourceSnapshot(parsed);
   } catch {
     return undefined;
   }
