@@ -20,6 +20,13 @@ footer.
 pi install npm:pi-fancy-footer
 ```
 
+> [!NOTE]
+> The default `nerd` icon family uses Private Use Area glyphs. On macOS, Kitty
+> is recommended because Terminal.app's default font commonly renders these
+> glyphs as question marks or missing-character boxes, including over SSH.
+> Terminal.app can still work when its profile explicitly uses a Nerd Font;
+> otherwise select the `unicode` or `ascii` icon family.
+
 ## 📊 What it shows
 
 - Active model + thinking level
@@ -132,9 +139,7 @@ Top-level settings:
 
 - `refreshMs` (number)
 - `iconFamily`
-  (`nerd` | `emoji` | `unicode` | `ascii`); when omitted, local sessions use
-  `nerd` and SSH sessions automatically use the more portable `unicode`
-  family. Set it explicitly to override SSH detection
+  (`nerd` | `emoji` | `unicode` | `ascii`, default `nerd`)
 - `gaugeStyle`
   (`blocks` | `lines` | `circles` | `parallelograms` | `diamonds` | `bars` |
   `stars` | `specks`)
