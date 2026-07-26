@@ -196,7 +196,11 @@ export function formatProviderStatusText(
     if (reset) parts.push(`reset:${reset}`);
   }
   if (config.showCredits) {
-    parts.push(...snapshot.balances.map(formatBalanceMetric));
+    parts.push(
+      ...snapshot.balances.map((balance) =>
+        formatProviderBalance(snapshot, balance),
+      ),
+    );
   }
 
   const body = parts.join(" ");
@@ -486,7 +490,6 @@ function formatReset(resetAt: string): string {
 
 export function formatBalanceMetric(balance: BalanceMetric): string {
   const approximate = balance.approximate ? "≈" : "";
-  if (balance.id === "credits") return `cr:${approximate}${balance.value}`;
   if (balance.currency) {
     const symbol =
       balance.currency === "CNY"
@@ -498,6 +501,16 @@ export function formatBalanceMetric(balance: BalanceMetric): string {
   }
   const unit = balance.unit ? ` ${balance.unit}` : "";
   return `${balance.label ? `${balance.label}:` : ""}${approximate}${balance.value}${unit}`;
+}
+
+export function formatProviderBalance(
+  snapshot: ProviderStatusSnapshot,
+  balance: BalanceMetric,
+): string {
+  if (snapshot.provider === "openai-codex" && balance.id === "credits") {
+    return `cr:${balance.approximate ? "≈" : ""}${balance.value}`;
+  }
+  return formatBalanceMetric(balance);
 }
 
 export function shouldShowProviderLabel(

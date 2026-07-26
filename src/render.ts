@@ -50,7 +50,7 @@ import {
 } from "./data-widgets.ts";
 import {
   buildProviderStatusGauge,
-  formatBalanceMetric,
+  formatProviderBalance,
   formatProviderStatusReset,
   formatProviderStatusText,
   isProviderStatusRelevantToModel,
@@ -95,7 +95,11 @@ function buildProviderStatusPart(
       if (reset) extras.push(`reset:${reset}`);
     }
     if (config.showCredits) {
-      extras.push(...snapshot.balances.map(formatBalanceMetric));
+      extras.push(
+        ...snapshot.balances.map((balance) =>
+          formatProviderBalance(snapshot, balance),
+        ),
+      );
     }
     const providerLabel = shouldShowProviderLabel(snapshot)
       ? `${snapshot.label} `
@@ -756,6 +760,7 @@ function buildFooterWidgets(
             formatProviderStatusText(snapshot, providerStatusConfig) !== "",
         ),
       renderText: ({
+        width,
         providerStatuses,
         providerStatusConfig,
         theme,
@@ -763,20 +768,75 @@ function buildFooterWidgets(
         gaugeColors,
         defaultTextColor,
       }) => {
-        const parts: string[] = [];
-        for (const snapshot of providerStatuses) {
-          const part = buildProviderStatusPart(
-            snapshot,
-            providerStatusConfig,
-            barStyle,
-            gaugeWidth,
-            gaugeColors,
-            theme,
-            defaultTextColor,
-          );
-          if (part) parts.push(part);
-        }
-        return parts.join(" ");
+        const renderParts = (
+          statuses: readonly ProviderStatusSnapshot[],
+          config: typeof providerStatusConfig,
+        ) =>
+          statuses
+            .map((snapshot) =>
+              buildProviderStatusPart(
+                snapshot,
+                config,
+                barStyle,
+                gaugeWidth,
+                gaugeColors,
+                theme,
+                defaultTextColor,
+              ),
+            )
+            .filter(Boolean)
+            .join(" ");
+        const budget = Math.max(12, Math.floor(width * 0.7));
+        const candidates: string[] = [];
+        candidates.push(renderParts(providerStatuses, providerStatusConfig));
+        candidates.push(
+          renderParts(providerStatuses, {
+            ...providerStatusConfig,
+            showReset: false,
+          }),
+        );
+        const shortened = providerStatuses.map((snapshot) => ({
+          ...snapshot,
+          label:
+            snapshot.label.length > 8
+              ? `${snapshot.label.slice(0, 7)}…`
+              : snapshot.label,
+        }));
+        candidates.push(
+          renderParts(shortened, {
+            ...providerStatusConfig,
+            showReset: false,
+          }),
+        );
+        const primaryBalances = shortened.map((snapshot) => ({
+          ...snapshot,
+          balances: snapshot.balances.slice(0, 1),
+        }));
+        candidates.push(
+          renderParts(primaryBalances, {
+            ...providerStatusConfig,
+            showReset: false,
+          }),
+        );
+        candidates.push(
+          renderParts(primaryBalances, {
+            ...providerStatusConfig,
+            display: "text",
+            showReset: false,
+          }),
+        );
+        candidates.push(
+          renderParts(primaryBalances.slice(0, 1), {
+            ...providerStatusConfig,
+            display: "text",
+            showReset: false,
+          }),
+        );
+        return (
+          candidates.find((candidate) => visibleWidth(candidate) <= budget) ??
+          candidates[candidates.length - 1] ??
+          ""
+        );
       },
     },
     {

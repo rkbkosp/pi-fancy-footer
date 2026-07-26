@@ -136,9 +136,7 @@ async function requestTokenRefresh(
     if (!response.ok) {
       return {
         ok: false,
-        error: new Error(
-          `${label} failed (${response.status}): ${text.slice(0, 500)}`,
-        ),
+        error: new Error(`${label} failed (${response.status})`),
       };
     }
     return { ok: true, stdout: text };

@@ -139,9 +139,7 @@ async function fetchCodexProviderStatus(
       continue;
     }
 
-    throw new Error(
-      `Codex usage request failed (${response.status}): ${text.slice(0, 500)}`,
-    );
+    throw new Error(`Codex usage request failed (${response.status})`);
   }
 
   throw new Error("Codex usage request failed after auth refresh");

@@ -92,9 +92,7 @@ async function fetchClaudeProviderStatus(
       continue;
     }
 
-    throw new Error(
-      `Claude usage request failed (${response.status}): ${text.slice(0, 500)}`,
-    );
+    throw new Error(`Claude usage request failed (${response.status})`);
   }
 
   throw new Error("Claude usage request failed after auth refresh");

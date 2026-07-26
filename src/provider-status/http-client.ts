@@ -117,11 +117,33 @@ export async function requestJson(request: JsonRequest): Promise<JsonResponse> {
     );
   }
 
-  const bytes = await readResponseBytes(
-    response,
-    request.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES,
-    signal,
-  );
+  let bytes: Uint8Array;
+  try {
+    bytes = await readResponseBytes(
+      response,
+      request.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES,
+      signal,
+    );
+  } catch (error) {
+    if (error instanceof ProviderStatusFailure) throw error;
+    if (timeoutSignal.aborted && !request.signal?.aborted) {
+      throw new ProviderStatusFailure("timeout", "Provider request timed out", {
+        cause: error,
+      });
+    }
+    if (request.signal?.aborted) {
+      throw new ProviderStatusFailure(
+        "network",
+        "Provider request was aborted",
+        {
+          cause: error,
+        },
+      );
+    }
+    throw new ProviderStatusFailure("network", "Provider response failed", {
+      cause: error,
+    });
+  }
   let data: unknown;
   try {
     data = JSON.parse(new TextDecoder().decode(bytes));

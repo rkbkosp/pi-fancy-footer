@@ -382,6 +382,56 @@ test("renderFooterLines reuses native gauges for declarative providers", () => {
   assert.match(lines.join("\n"), /0-0 月 ■■■■□ 73% ¥84\.26/);
 });
 
+test("renderFooterLines degrades long provider status before truncating layout", () => {
+  const status: ProviderStatusSnapshot = {
+    provider: "long-provider",
+    label: "Very Long Provider Label",
+    source: "api",
+    fetchedAt: "2026-07-15T20:34:35Z",
+    windows: [
+      {
+        id: "monthly",
+        label: "monthly",
+        remainingPercent: 73,
+        resetAt: "2030-01-01T12:00:00.000Z",
+      },
+    ],
+    balances: [
+      { id: "primary", value: 84.26, currency: "CNY" },
+      { id: "secondary", value: 10, currency: "USD" },
+    ],
+  };
+  const config: FooterConfigSnapshot = {
+    ...footerConfig,
+    providerStatus: {
+      ...footerConfig.providerStatus,
+      display: "gauge",
+      showCredits: true,
+      showReset: true,
+    },
+  };
+
+  const output = renderFooterLines(
+    50,
+    contextWithModel({
+      provider: "long-provider",
+      id: "model",
+      name: "Model",
+    }) as never,
+    EMPTY_GIT_INFO,
+    "off",
+    theme as never,
+    usageMetrics,
+    config,
+    [],
+    [status],
+  ).join("\n");
+
+  assert.doesNotMatch(output, /reset:/);
+  assert.doesNotMatch(output, /\$10/);
+  assert.match(output, /Very Lo…|monthly:73%/);
+});
+
 test("renderFooterLines hides Anthropic provider status for OpenAI models", () => {
   const lines = renderFooterLines(
     120,

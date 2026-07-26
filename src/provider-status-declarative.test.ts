@@ -70,6 +70,7 @@ test("selectJson supports object paths and array indexes", () => {
   const value = { data: { items: [{ remaining: 42 }], nullable: null } };
   assert.equal(selectJson(value, "data.items[0].remaining"), 42);
   assert.equal(selectJson(value, "data.missing"), undefined);
+  assert.equal(selectJson(value, "data.nullable"), null);
   assert.equal(selectJson(value, "data.nullable.value"), undefined);
   assert.equal(selectJson({ data: 1 }, "data.value"), undefined);
 });
