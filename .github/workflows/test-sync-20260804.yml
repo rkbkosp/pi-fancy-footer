@@ -1,0 +1,45 @@
+name: Validate upstream sync once
+
+on:
+  pull_request:
+    types:
+      - edited
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    if: github.head_ref == 'sync-upstream-20260804'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out sync branch
+        uses: actions/checkout@v4
+        with:
+          ref: sync-upstream-20260804
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Remove temporary validation workflow
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/test-sync-20260804.yml
+          git commit -m "chore: remove temporary sync validation workflow"
+          git push origin HEAD:sync-upstream-20260804
