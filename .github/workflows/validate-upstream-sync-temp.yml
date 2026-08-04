@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   validate:
-    if: github.head_ref == 'sync-validator-control' || github.head_ref == 'sync-upstream-20260804'
+    if: startsWith(github.head_ref, 'sync-validator-control') || github.head_ref == 'sync-upstream-20260804'
     runs-on: ubuntu-latest
     steps:
       - name: Check out sync branch
@@ -28,6 +28,7 @@ jobs:
           set -euo pipefail
           git fetch origin main
           git show origin/main:scripts/validate-sync-temp.py > /tmp/validate-sync-temp.py
+          sed -i 's/re.subn(pattern, replacement,/re.subn(pattern, lambda _: replacement,/' /tmp/validate-sync-temp.py
           python /tmp/validate-sync-temp.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
