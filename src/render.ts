@@ -124,6 +124,14 @@ function buildProviderStatusPart(
     const extras = config.showCredits
       ? (snapshot.balances ?? []).map((balance) => formatProviderBalance(snapshot, balance))
       : [];
+    const legacyCredits = (snapshot as ProviderStatusSnapshot & { credits?: string }).credits;
+    if (
+      config.showCredits &&
+      legacyCredits &&
+      !(snapshot.balances ?? []).some((balance) => balance.id === "credits")
+    ) {
+      extras.push(`cr:${legacyCredits}`);
+    }
     const providerLabel = shouldShowProviderLabel(snapshot)
       ? `${snapshot.label} `
       : "";
@@ -830,6 +838,7 @@ function buildFooterWidgets(
                 gaugeColors,
                 theme,
                 defaultTextColor,
+                nowMs,
               ),
             )
             .filter(Boolean)
@@ -840,44 +849,44 @@ function buildFooterWidgets(
         candidates.push(
           renderParts(providerStatuses, {
             ...providerStatusConfig,
-            showReset: false,
+            showReset: "off",
           }),
         );
-        const shortened = providerStatuses.map((snapshot) => ({
-          ...snapshot,
-          label:
-            snapshot.label.length > 8
-              ? `${snapshot.label.slice(0, 7)}…`
-              : snapshot.label,
-        }));
+        const shortened = providerStatuses.map((snapshot) => {
+          const label = snapshot.label ?? snapshot.provider;
+          return {
+            ...snapshot,
+            label: label.length > 8 ? `${label.slice(0, 7)}…` : label,
+          };
+        });
         candidates.push(
           renderParts(shortened, {
             ...providerStatusConfig,
-            showReset: false,
+            showReset: "off",
           }),
         );
         const primaryBalances = shortened.map((snapshot) => ({
           ...snapshot,
-          balances: snapshot.balances.slice(0, 1),
+          balances: (snapshot.balances ?? []).slice(0, 1),
         }));
         candidates.push(
           renderParts(primaryBalances, {
             ...providerStatusConfig,
-            showReset: false,
+            showReset: "off",
           }),
         );
         candidates.push(
           renderParts(primaryBalances, {
             ...providerStatusConfig,
             display: "text",
-            showReset: false,
+            showReset: "off",
           }),
         );
         candidates.push(
           renderParts(primaryBalances.slice(0, 1), {
             ...providerStatusConfig,
             display: "text",
-            showReset: false,
+            showReset: "off",
           }),
         );
         return (

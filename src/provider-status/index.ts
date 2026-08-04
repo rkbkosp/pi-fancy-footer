@@ -204,33 +204,54 @@ function compatibilityWindows(snapshot: ProviderStatusSnapshot): CompatibilityWi
     primary?: Record<string, unknown>;
     secondary?: Record<string, unknown>;
   };
-  if (legacy.primary || legacy.secondary) {
+  const generic = snapshot.windows ?? [];
+  const builtinQuota =
+    isCodexProviderId(snapshot.provider) || snapshot.provider === ANTHROPIC_SOURCE.id;
+
+  const displayPercent = (window: QuotaWindow | undefined): number | undefined => {
+    if (!window) return undefined;
+    if (builtinQuota) {
+      if (window.usedPercent !== undefined) return window.usedPercent;
+      if (window.remainingPercent !== undefined) return 100 - window.remainingPercent;
+      return undefined;
+    }
+    // Declarative/custom providers historically display remaining quota.
+    if (window.remainingPercent !== undefined) return window.remainingPercent;
+    if (window.usedPercent !== undefined) return 100 - window.usedPercent;
+    return remainingPercent(window);
+  };
+
+  const hasLegacy = legacy.primary !== undefined || legacy.secondary !== undefined;
+  if (hasLegacy) {
     return ([
-      ["primary", legacy.primary],
-      ["secondary", legacy.secondary],
-    ] as const).flatMap(([role, value]) => {
-      if (!value) return [];
-      const usedPercent = typeof value.usedPercent === "number" ? value.usedPercent : undefined;
+      ["primary", legacy.primary, generic[0]],
+      ["secondary", legacy.secondary, generic[1]],
+    ] as const).flatMap(([role, value, base]) => {
+      if (!value && !base) return [];
+      const legacyUsed = typeof value?.usedPercent === "number" ? value.usedPercent : undefined;
+      const usedPercent = legacyUsed ?? displayPercent(base);
+      const label =
+        typeof value?.label === "string"
+          ? value.label
+          : base?.label ?? role;
+      const resetAt =
+        compatibilityResetAt(value?.resetAt) ?? compatibilityResetAt(base?.resetAt);
       return [{
-        id: typeof value.id === "string" ? value.id : typeof value.label === "string" ? value.label : role,
-        label: typeof value.label === "string" ? value.label : role,
+        id: typeof value?.id === "string" ? value.id : base?.id ?? label,
+        label,
         role,
         ...(usedPercent !== undefined ? { usedPercent } : {}),
-        ...(compatibilityResetAt(value.resetAt) !== undefined
-          ? { resetAt: compatibilityResetAt(value.resetAt) }
+        ...(resetAt !== undefined ? { resetAt } : {}),
+        ...(value?.usageUnknown === true || base?.usageUnknown === true
+          ? { usageUnknown: true }
           : {}),
-        ...(value.usageUnknown === true ? { usageUnknown: true } : {}),
+        ...(base ? { raw: base } : {}),
       }];
     });
   }
 
-  return (snapshot.windows ?? []).map((window, index) => {
-    const usedPercent =
-      window.usedPercent !== undefined
-        ? window.usedPercent
-        : window.remainingPercent !== undefined
-          ? 100 - window.remainingPercent
-          : undefined;
+  return generic.map((window, index) => {
+    const usedPercent = displayPercent(window);
     return {
       id: window.id,
       label: window.label,
@@ -284,7 +305,11 @@ export function formatProviderStatusText(
   if (!snapshot) return "";
   const windows = compatibilityWindows(snapshot);
   const balances = snapshot.balances ?? [];
-  if (windows.length === 0 && (!config.showCredits || balances.length === 0)) return "";
+  const legacyCredits = (snapshot as ProviderStatusSnapshot & { credits?: string }).credits;
+  if (
+    windows.length === 0 &&
+    (!config.showCredits || (balances.length === 0 && !legacyCredits))
+  ) return "";
 
   const parts = windows.flatMap((window) => {
     let part: string | undefined;
@@ -306,6 +331,9 @@ export function formatProviderStatusText(
 
   if (config.showCredits) {
     parts.push(...balances.map((balance) => formatProviderBalance(snapshot, balance)));
+    if (legacyCredits && !balances.some((balance) => balance.id === "credits")) {
+      parts.push(`cr:${legacyCredits}`);
+    }
   }
   const body = parts.join(" ");
   if (!body) return "";
@@ -513,6 +541,13 @@ async function collectProviderStatusFromSourceOnce(
       : fresh;
     const { error: _staleError, stale: _stale, ...snapshot } = merged;
     await writeProviderStatusCache(snapshot, cacheKey).catch(() => undefined);
+    const scoped = (snapshot as ProviderStatusSnapshot & { scoped?: unknown[] }).scoped;
+    if (Array.isArray(scoped) && scoped.length === 0) {
+      const { scoped: _emptyScoped, ...visible } = snapshot as ProviderStatusSnapshot & {
+        scoped?: unknown[];
+      };
+      return visible as ProviderStatusSnapshot;
+    }
     return snapshot;
   } catch (error) {
     // A refresh failed. The cached quota windows remain valid until they
