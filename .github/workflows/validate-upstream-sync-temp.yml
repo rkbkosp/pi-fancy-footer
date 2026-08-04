@@ -1,7 +1,9 @@
 name: Temporary upstream sync validator
 
 on:
-  push:
+  pull_request:
+    types:
+      - edited
     branches:
       - main
 
@@ -10,7 +12,7 @@ permissions:
 
 jobs:
   validate:
-    if: github.event.head_commit.message == 'chore: trigger upstream sync validator'
+    if: github.head_ref == 'sync-upstream-20260804'
     runs-on: ubuntu-latest
     steps:
       - name: Check out sync branch
