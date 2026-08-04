@@ -160,6 +160,11 @@ export function normalizeProviderResourceSnapshot(
     : normalizeLegacyBalances(obj);
   const label = stringValue(obj.label) ?? providerLabel(provider);
   const error = normalizeError(obj.error);
+  const scoped = Array.isArray(obj.scoped)
+    ? obj.scoped
+        .map((window) => normalizeScopedCompatibilityWindow(window))
+        .filter((window): window is Record<string, unknown> => window !== undefined)
+    : undefined;
 
   return {
     provider,
@@ -168,9 +173,35 @@ export function normalizeProviderResourceSnapshot(
     source,
     windows,
     balances,
+    ...(obj.primary && objectValue(obj.primary) ? { primary: obj.primary } : {}),
+    ...(obj.secondary && objectValue(obj.secondary) ? { secondary: obj.secondary } : {}),
+    ...(scoped !== undefined ? { scoped } : {}),
+    ...(stringValue(obj.state) ? { state: stringValue(obj.state) } : {}),
+    ...(stringValue(obj.credits) ? { credits: stringValue(obj.credits) } : {}),
     ...(obj.stale === true ? { stale: true } : {}),
     ...(error ? { error } : {}),
     ...(stringValue(obj.url) ? { url: stringValue(obj.url) } : {}),
+  };
+}
+
+function normalizeScopedCompatibilityWindow(
+  value: unknown,
+): Record<string, unknown> | undefined {
+  const obj = objectValue(value);
+  if (!obj) return undefined;
+  const label = stringValue(obj.label);
+  const model = stringValue(obj.model);
+  const usedPercent = numberValue(obj.usedPercent);
+  if (!label || !model || usedPercent === undefined) return undefined;
+  const leftPercent = numberValue(obj.leftPercent) ?? clampPercent(100 - usedPercent);
+  const resetAt = numberValue(obj.resetAt);
+  return {
+    label,
+    model,
+    usedPercent: clampPercent(usedPercent),
+    leftPercent: clampPercent(leftPercent),
+    ...(resetAt !== undefined ? { resetAt } : {}),
+    ...(obj.usageUnknown === true ? { usageUnknown: true } : {}),
   };
 }
 
@@ -218,6 +249,7 @@ function normalizeWindow(value: unknown): QuotaWindow | undefined {
   }
   const unit = stringValue(obj.unit);
   const resetAt = resetAtValue(obj.resetAt);
+  if (obj.usageUnknown === true) normalized.usageUnknown = true;
   if (unit) normalized.unit = unit;
   if (resetAt) normalized.resetAt = resetAt;
   return normalized;

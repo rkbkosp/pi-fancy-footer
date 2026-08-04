@@ -3,6 +3,7 @@ import { refreshAuth, resolveClaudeAuth } from "../auth.ts";
 import {
   numberString,
   numberValue,
+  computeProviderStatusState,
   objectValue,
   resetAtFromTimestamp,
   stringValue,
@@ -47,18 +48,99 @@ export function normalizeClaudeUsageResponse(
     CLAUDE_SECONDARY_WINDOW_LABEL,
     now,
   );
-  if (!primary && !secondary) return undefined;
+  const limits = normalizeClaudeLimits(obj.limits, now);
+  const resolvedPrimary =
+    primary ?? limits?.account.get(CLAUDE_PRIMARY_WINDOW_LABEL);
+  const resolvedSecondary =
+    secondary ?? limits?.account.get(CLAUDE_SECONDARY_WINDOW_LABEL);
+  if (!resolvedPrimary && !resolvedSecondary) return undefined;
 
+  const windows = [resolvedPrimary, resolvedSecondary].filter(
+    (window): window is QuotaWindow => window !== undefined,
+  );
+  const legacyPrimary = resolvedPrimary
+    ? compatibilityWindow(resolvedPrimary)
+    : undefined;
+  const legacySecondary = resolvedSecondary
+    ? compatibilityWindow(resolvedSecondary)
+    : undefined;
   return {
     provider: "anthropic",
     label: "Claude",
     source: "api",
     fetchedAt: now.toISOString(),
-    windows: [primary, secondary].filter(
-      (window): window is QuotaWindow => window !== undefined,
-    ),
+    windows,
     balances: [],
+    state: computeProviderStatusState(windows),
+    ...(legacyPrimary ? { primary: legacyPrimary } : {}),
+    ...(legacySecondary ? { secondary: legacySecondary } : {}),
+    ...(limits ? { scoped: limits.scoped } : {}),
     url: CLAUDE_USAGE_URL,
+  } as ProviderStatusSnapshot;
+}
+
+interface ClaudeLimitWindows {
+  account: Map<string, QuotaWindow>;
+  scoped: Record<string, unknown>[];
+}
+
+function normalizeClaudeLimits(
+  value: unknown,
+  now: Date,
+): ClaudeLimitWindows | undefined {
+  if (!Array.isArray(value)) return undefined;
+
+  const account = new Map<string, QuotaWindow>();
+  const scoped = new Map<string, Record<string, unknown>>();
+  const scopedIsActive = new Set<string>();
+
+  for (const entry of value) {
+    const limit = objectValue(entry);
+    if (!limit) continue;
+    const group = stringValue(limit.group);
+    const label =
+      group === "session"
+        ? CLAUDE_PRIMARY_WINDOW_LABEL
+        : group === "weekly"
+          ? CLAUDE_SECONDARY_WINDOW_LABEL
+          : undefined;
+    const usedPercent = numberValue(limit.percent);
+    if (!label || usedPercent === undefined) continue;
+
+    const window = windowFromUsedPercent(
+      label,
+      label,
+      usedPercent,
+      resetAtFromTimestamp(stringValue(limit.resets_at)),
+      now,
+    );
+    const scope = objectValue(limit.scope);
+    if (!scope) {
+      if (!account.has(label)) account.set(label, window);
+      continue;
+    }
+
+    const model = stringValue(objectValue(scope.model)?.display_name);
+    if (!model) continue;
+    const key = `${label}\u0000${model.toLowerCase()}`;
+    const active = limit.is_active === true;
+    if (scoped.has(key) && !(active && !scopedIsActive.has(key))) continue;
+    scoped.set(key, { ...compatibilityWindow(window), model });
+    if (active) scopedIsActive.add(key);
+  }
+
+  return { account, scoped: Array.from(scoped.values()) };
+}
+
+function compatibilityWindow(window: QuotaWindow): Record<string, unknown> {
+  const usedPercent = window.usedPercent ?? 0;
+  const leftPercent = window.remainingPercent ?? Math.max(0, 100 - usedPercent);
+  const resetMs = window.resetAt ? Date.parse(window.resetAt) : Number.NaN;
+  return {
+    label: window.label,
+    usedPercent,
+    leftPercent,
+    ...(Number.isFinite(resetMs) ? { resetAt: Math.round(resetMs / 1000) } : {}),
   };
 }
 

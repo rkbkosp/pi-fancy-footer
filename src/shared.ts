@@ -538,7 +538,9 @@ export interface ProviderStatusConfigSnapshot {
   providers: readonly string[];
   display: ProviderStatusDisplay;
   showCredits: boolean;
-  showReset: boolean;
+  showReset: ProviderStatusResetMode;
+  /** Inclusive displayed-used-percentage threshold for reset countdowns. */
+  resetMinUsedPercent: number;
   customProviders: Record<string, DeclarativeProviderConfig>;
 }
 
@@ -548,7 +550,8 @@ export const DEFAULT_PROVIDER_STATUS_CONFIG: ProviderStatusConfigSnapshot = {
   providers: ["openai-codex", "anthropic"],
   display: "gauge",
   showCredits: false,
-  showReset: false,
+  showReset: "all",
+  resetMinUsedPercent: 75,
   customProviders: {},
 };
 

@@ -99,7 +99,7 @@ function looksLikeAnthropicModel(value: string): boolean {
   return (
     normalized.includes("anthropic") ||
     normalized.includes("claude") ||
-    /(^|-)(sonnet|opus|haiku)(?:-|$)/.test(normalized)
+    /(^|-)(sonnet|opus|haiku|fable)(?:-|$)/.test(normalized)
   );
 }
 
@@ -178,50 +178,135 @@ function currentProviderId(model: ModelLike | string | undefined): string {
   return modelValue(model.provider) || modelValue(model.providerId);
 }
 
+interface CompatibilityWindow {
+  id: string;
+  label: string;
+  role: "primary" | "secondary";
+  usedPercent?: number;
+  resetAt?: number;
+  usageUnknown?: boolean;
+  raw?: QuotaWindow;
+}
+
+function compatibilityResetAt(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value > 10_000_000_000 ? Math.round(value / 1000) : value;
+  }
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? Math.round(parsed / 1000) : undefined;
+  }
+  return undefined;
+}
+
+function compatibilityWindows(snapshot: ProviderStatusSnapshot): CompatibilityWindow[] {
+  const legacy = snapshot as ProviderStatusSnapshot & {
+    primary?: Record<string, unknown>;
+    secondary?: Record<string, unknown>;
+  };
+  if (legacy.primary || legacy.secondary) {
+    return ([
+      ["primary", legacy.primary],
+      ["secondary", legacy.secondary],
+    ] as const).flatMap(([role, value]) => {
+      if (!value) return [];
+      const usedPercent = typeof value.usedPercent === "number" ? value.usedPercent : undefined;
+      return [{
+        id: typeof value.id === "string" ? value.id : typeof value.label === "string" ? value.label : role,
+        label: typeof value.label === "string" ? value.label : role,
+        role,
+        ...(usedPercent !== undefined ? { usedPercent } : {}),
+        ...(compatibilityResetAt(value.resetAt) !== undefined
+          ? { resetAt: compatibilityResetAt(value.resetAt) }
+          : {}),
+        ...(value.usageUnknown === true ? { usageUnknown: true } : {}),
+      }];
+    });
+  }
+
+  return (snapshot.windows ?? []).map((window, index) => {
+    const usedPercent =
+      window.usedPercent !== undefined
+        ? window.usedPercent
+        : window.remainingPercent !== undefined
+          ? 100 - window.remainingPercent
+          : undefined;
+    return {
+      id: window.id,
+      label: window.label,
+      role: index === 0 ? "primary" : "secondary",
+      ...(usedPercent !== undefined ? { usedPercent } : {}),
+      ...(compatibilityResetAt(window.resetAt) !== undefined
+        ? { resetAt: compatibilityResetAt(window.resetAt) }
+        : {}),
+      ...(window.usageUnknown === true ? { usageUnknown: true } : {}),
+      raw: window,
+    };
+  });
+}
+
+function resetMode(config: Pick<ProviderStatusConfigSnapshot, "showReset">): "off" | "primary" | "all" {
+  const value = config.showReset as unknown;
+  if (value === true) return "primary";
+  if (value === false) return "off";
+  return value === "primary" || value === "all" ? value : "off";
+}
+
+export function resetCountdownText(
+  window: Pick<CompatibilityWindow, "usedPercent" | "resetAt" | "usageUnknown">,
+  role: "primary" | "secondary",
+  config: Pick<ProviderStatusConfigSnapshot, "showReset" | "resetMinUsedPercent">,
+  nowMs: number,
+): string {
+  const mode = resetMode(config);
+  const roleEnabled = mode === "all" || (mode === "primary" && role === "primary");
+  const displayed = window.usedPercent === undefined
+    ? 0
+    : Number.parseFloat(formatGaugePercent(window.usedPercent));
+  const threshold = Number.isFinite(config.resetMinUsedPercent)
+    ? config.resetMinUsedPercent
+    : 75;
+  if (
+    !roleEnabled ||
+    window.usageUnknown ||
+    window.resetAt === undefined ||
+    !Number.isFinite(displayed) ||
+    displayed < threshold
+  ) return "";
+  return formatResetCountdown(window.resetAt, nowMs);
+}
+
 export function formatProviderStatusText(
   snapshot: ProviderStatusSnapshot | undefined,
-  config: Pick<ProviderStatusConfigSnapshot, "showCredits" | "showReset">,
+  config: Pick<ProviderStatusConfigSnapshot, "showCredits" | "showReset" | "resetMinUsedPercent">,
+  nowMs = Date.now(),
 ): string {
   if (!snapshot) return "";
-  if (
-    snapshot.windows.length === 0 &&
-    (!config.showCredits || snapshot.balances.length === 0)
-  ) {
-    return "";
-  }
+  const windows = compatibilityWindows(snapshot);
+  const balances = snapshot.balances ?? [];
+  if (windows.length === 0 && (!config.showCredits || balances.length === 0)) return "";
 
-  const parts = snapshot.windows.flatMap((window) => {
-    const left = remainingPercent(window);
-    if (left !== undefined) {
-      return [`${window.label}:${formatGaugePercent(left)}`];
+  const parts = windows.flatMap((window) => {
+    let part: string | undefined;
+    if (window.usedPercent !== undefined) {
+      part = `${window.label}:${formatGaugePercent(window.usedPercent)}`;
+    } else if (window.raw) {
+      const raw = window.raw;
+      const unit = raw.unit ? ` ${raw.unit}` : "";
+      if (raw.remaining !== undefined) part = `${window.label}:${raw.remaining}${unit}`;
+      else if (raw.used !== undefined && raw.limit !== undefined) part = `${window.label}:${raw.used}/${raw.limit}${unit}`;
+      else if (raw.used !== undefined) part = `${window.label}:${raw.used}${unit}`;
+      else if (raw.limit !== undefined) part = `${window.label}:${raw.limit}${unit}`;
     }
-    const unit = window.unit ? ` ${window.unit}` : "";
-    if (window.remaining !== undefined) {
-      return [`${window.label}:${window.remaining}${unit}`];
-    }
-    if (window.used !== undefined && window.limit !== undefined) {
-      return [`${window.label}:${window.used}/${window.limit}${unit}`];
-    }
-    if (window.used !== undefined) {
-      return [`${window.label}:${window.used}${unit}`];
-    }
-    if (window.limit !== undefined) {
-      return [`${window.label}:${window.limit}${unit}`];
-    }
-    return [];
+    if (!part) return [];
+    const reset = resetCountdownText(window, window.role, config, nowMs);
+    if (reset) part += ` ${reset}`;
+    return [part];
   });
-  if (config.showReset && snapshot.windows[0]?.resetAt) {
-    const reset = formatReset(snapshot.windows[0].resetAt);
-    if (reset) parts.push(`reset:${reset}`);
-  }
-  if (config.showCredits) {
-    parts.push(
-      ...snapshot.balances.map((balance) =>
-        formatProviderBalance(snapshot, balance),
-      ),
-    );
-  }
 
+  if (config.showCredits) {
+    parts.push(...balances.map((balance) => formatProviderBalance(snapshot, balance)));
+  }
   const body = parts.join(" ");
   if (!body) return "";
   const label = shouldShowProviderLabel(snapshot)
@@ -236,7 +321,10 @@ export function providerStatusColor(
   snapshot: ProviderStatusSnapshot | undefined,
 ): "success" | "warning" | "error" | "dim" {
   if (!snapshot) return "dim";
-  const state = computeProviderStatusState(snapshot.windows);
+  const compatibilityState = (snapshot as ProviderStatusSnapshot & { state?: string }).state;
+  const state = compatibilityState === "ok" || compatibilityState === "warning" || compatibilityState === "error" || compatibilityState === "unavailable"
+    ? compatibilityState
+    : computeProviderStatusState(snapshot.windows ?? []);
   if (state === "unavailable") return "dim";
   if (state === "error") return "error";
   if (state === "warning") return "warning";
@@ -246,6 +334,10 @@ export function providerStatusColor(
 export interface ProviderStatusGaugeSegment extends GaugeSegment {
   id: string;
   label: string;
+  role: "primary" | "secondary";
+  usedPercent: number;
+  resetAt?: number;
+  usageUnknown?: true;
 }
 
 export function buildProviderStatusGauge(
@@ -254,19 +346,21 @@ export function buildProviderStatusGauge(
   cells: number,
 ): ProviderStatusGaugeSegment[] {
   if (!snapshot) return [];
-  return snapshot.windows.flatMap((window) => {
-    const left = remainingPercent(window);
-    if (left === undefined) return [];
-    return [
-      {
-        id: window.id,
-        label: window.label,
-        ...buildGauge(left, style, cells),
-      },
-    ];
+  return compatibilityWindows(snapshot).flatMap((window) => {
+    if (window.usedPercent === undefined) return [];
+    const gauge = buildGauge(window.usageUnknown ? 0 : window.usedPercent, style, cells);
+    return [{
+      id: window.id,
+      label: window.label,
+      role: window.role,
+      usedPercent: window.usedPercent,
+      ...(window.resetAt !== undefined ? { resetAt: window.resetAt } : {}),
+      ...(window.usageUnknown ? { usageUnknown: true as const } : {}),
+      ...gauge,
+      ...(window.usageUnknown ? { percentText: "—" } : {}),
+    }];
   });
 }
-
 
 export function formatResetCountdown(
   resetAt: number,

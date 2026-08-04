@@ -69,6 +69,7 @@ const footerWidgetFillSchema = literalUnion(["none", "grow"]);
 const footerWidgetIconModeSchema = literalUnion(["default", "hide"]);
 const providerStatusProviderSchema = literalUnion(PROVIDER_STATUS_PROVIDER_IDS);
 const providerStatusDisplaySchema = literalUnion(PROVIDER_STATUS_DISPLAYS);
+const providerStatusResetModeSchema = literalUnion(PROVIDER_STATUS_RESET_MODES);
 const timestampUnitSchema = literalUnion([
   "seconds",
   "milliseconds",
@@ -243,7 +244,10 @@ const providerStatusConfigSchema = Type.Object(
     providers: Type.Optional(Type.Array(providerStatusProviderSchema)),
     display: Type.Optional(providerStatusDisplaySchema),
     showCredits: Type.Optional(Type.Boolean()),
-    showReset: Type.Optional(Type.Boolean()),
+    showReset: Type.Optional(providerStatusResetModeSchema),
+    resetMinUsedPercent: Type.Optional(
+      Type.Number({ minimum: 0, maximum: 100 }),
+    ),
     customProviders: Type.Optional(
       Type.Record(
         Type.String({ pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" }),
@@ -388,6 +392,9 @@ function parseProviderStatusConfig(
     showCredits:
       input?.showCredits ?? DEFAULT_PROVIDER_STATUS_CONFIG.showCredits,
     showReset: input?.showReset ?? DEFAULT_PROVIDER_STATUS_CONFIG.showReset,
+    resetMinUsedPercent:
+      input?.resetMinUsedPercent ??
+      DEFAULT_PROVIDER_STATUS_CONFIG.resetMinUsedPercent,
     customProviders: structuredClone(
       input?.customProviders ?? DEFAULT_PROVIDER_STATUS_CONFIG.customProviders,
     ),

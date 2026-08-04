@@ -51,11 +51,11 @@ import {
 import {
   buildProviderStatusGauge,
   formatProviderBalance,
-  formatProviderStatusReset,
   formatProviderStatusText,
   isProviderStatusRelevantToModel,
   projectProviderStatusForModel,
   providerStatusColor,
+  resetCountdownText,
   shouldShowProviderLabel,
 } from "./provider-status.ts";
 
@@ -117,20 +117,13 @@ function buildProviderStatusPart(
         ) +
         theme.fg("dim", segment.emptyGlyphs) +
         theme.fg(defaultTextColor, ` ${segment.percentText}`);
+      const reset = resetCountdownText(segment, segment.role, config, nowMs);
+      if (reset) piece += theme.fg("dim", ` ${reset}`);
       return piece;
     });
-    const extras: string[] = [];
-    if (config.showReset && snapshot.windows[0]?.resetAt) {
-      const reset = formatProviderStatusReset(snapshot.windows[0].resetAt);
-      if (reset) extras.push(`reset:${reset}`);
-    }
-    if (config.showCredits) {
-      extras.push(
-        ...snapshot.balances.map((balance) =>
-          formatProviderBalance(snapshot, balance),
-        ),
-      );
-    }
+    const extras = config.showCredits
+      ? (snapshot.balances ?? []).map((balance) => formatProviderBalance(snapshot, balance))
+      : [];
     const providerLabel = shouldShowProviderLabel(snapshot)
       ? `${snapshot.label} `
       : "";
@@ -140,9 +133,7 @@ function buildProviderStatusPart(
         `${snapshot.stale ? "~" : ""}${providerLabel}`,
       ) +
       pieces.join(" ") +
-      (extras.length > 0
-        ? theme.fg(defaultTextColor, ` ${extras.join(" ")}`)
-        : "");
+      (extras.length > 0 ? theme.fg(defaultTextColor, ` ${extras.join(" ")}`) : "");
   } else {
     const color = providerStatusColor(snapshot);
     body = theme.fg(
@@ -1117,9 +1108,18 @@ export function renderFooterLines(
   footerConfig: FooterConfigSnapshot,
   extensionWidgets: readonly NormalizedFancyFooterDataWidget[] = [],
   providerStatuses: readonly ProviderStatusSnapshot[] = [],
-  extensionStatuses: ReadonlyMap<string, string> = new Map(),
+  extensionStatusesOrNowMs: ReadonlyMap<string, string> | number = new Map(),
+  maybeNowMs = Date.now(),
 ): string[] {
   if (width <= 0) return ["", ""];
+  const extensionStatuses =
+    typeof extensionStatusesOrNowMs === "number"
+      ? new Map<string, string>()
+      : extensionStatusesOrNowMs;
+  const nowMs =
+    typeof extensionStatusesOrNowMs === "number"
+      ? extensionStatusesOrNowMs
+      : maybeNowMs;
 
   const metrics = computeFooterMetrics(
     ctx,
