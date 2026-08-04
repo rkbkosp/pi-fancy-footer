@@ -233,7 +233,7 @@ function compatibilityWindows(snapshot: ProviderStatusSnapshot): CompatibilityWi
       const label =
         typeof value?.label === "string"
           ? value.label
-          : base?.label ?? role;
+          : base?.label ?? (role === "primary" ? "5h" : "7d");
       const resetAt =
         compatibilityResetAt(value?.resetAt) ?? compatibilityResetAt(base?.resetAt);
       return [{
@@ -435,6 +435,36 @@ export function projectProviderStatusForModel(snapshot: any, model: ModelLike | 
     typeof window?.model === "string" && scopeMatchesModel(window.model, model),
   );
   if (applicable.length === 0) return snapshot;
+
+  const compatibility = compatibilityWindows(snapshot);
+  const baseWindow = (role: "primary" | "secondary") => {
+    const original = snapshot[role];
+    const fallback = compatibility.find((window) => window.role === role);
+    if (!original && !fallback) return undefined;
+    const usedPercent =
+      typeof original?.usedPercent === "number"
+        ? original.usedPercent
+        : fallback?.usedPercent;
+    return {
+      ...(original ?? {}),
+      label:
+        typeof original?.label === "string"
+          ? original.label
+          : fallback?.label ?? (role === "primary" ? "5h" : "7d"),
+      ...(usedPercent !== undefined
+        ? {
+            usedPercent,
+            leftPercent:
+              typeof original?.leftPercent === "number"
+                ? original.leftPercent
+                : Math.max(0, 100 - usedPercent),
+          }
+        : {}),
+      ...(original?.resetAt === undefined && fallback?.resetAt !== undefined
+        ? { resetAt: fallback.resetAt }
+        : {}),
+    };
+  };
   const apply = (window: any) => {
     const matches = applicable.filter((candidate: any) => candidate.label === window?.label);
     if (matches.length === 0) return window;
@@ -446,13 +476,26 @@ export function projectProviderStatusForModel(snapshot: any, model: ModelLike | 
     }
     return strictest;
   };
-  const primary = apply(snapshot.primary);
-  const secondary = apply(snapshot.secondary);
-  if (primary === snapshot.primary && secondary === snapshot.secondary) return snapshot;
-  const used = [primary, secondary].filter(Boolean).map((w: any) => Number(w.usedPercent)).filter(Number.isFinite);
+  const primary = apply(baseWindow("primary"));
+  const secondary = apply(baseWindow("secondary"));
+  const used = [primary, secondary]
+    .filter(Boolean)
+    .map((window: any) => Number(window.usedPercent))
+    .filter(Number.isFinite);
   const max = used.length ? Math.max(...used) : Number.NaN;
-  const state = !Number.isFinite(max) ? "unavailable" : max > 75 ? "error" : max > 40 ? "warning" : "ok";
-  return { ...snapshot, ...(primary ? { primary } : {}), ...(secondary ? { secondary } : {}), state };
+  const state = !Number.isFinite(max)
+    ? "unavailable"
+    : max > 75
+      ? "error"
+      : max > 40
+        ? "warning"
+        : "ok";
+  return {
+    ...snapshot,
+    ...(primary ? { primary } : {}),
+    ...(secondary ? { secondary } : {}),
+    state,
+  };
 }
 
 export interface CollectProviderStatusOptions {
