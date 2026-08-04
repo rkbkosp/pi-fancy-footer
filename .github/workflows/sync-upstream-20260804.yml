@@ -1,0 +1,32 @@
+name: Sync upstream once
+
+on:
+  push:
+    branches:
+      - sync-upstream-20260804
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out fork branch
+        uses: actions/checkout@v4
+        with:
+          ref: sync-upstream-20260804
+          fetch-depth: 0
+
+      - name: Merge upstream and remove this temporary workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/mavam/pi-fancy-footer.git
+          git fetch upstream main
+          git merge --no-edit -X ours upstream/main
+          git rm .github/workflows/sync-upstream-20260804.yml
+          git commit -m "chore: remove temporary upstream sync workflow"
+          git push origin HEAD:sync-upstream-20260804
