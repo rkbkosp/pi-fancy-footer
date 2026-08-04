@@ -41,6 +41,7 @@ import {
   MIN_PROVIDER_STATUS_REFRESH_MS,
   PROVIDER_STATUS_DISPLAYS,
   PROVIDER_STATUS_PROVIDER_IDS,
+  PROVIDER_STATUS_RESET_MODES,
   type BuiltInFooterWidgetId,
   type FooterConfigSnapshot,
   type FooterWidgetAlign,
@@ -682,6 +683,8 @@ function toFooterConfigObject(
       DEFAULT_PROVIDER_STATUS_CONFIG.showCredits ||
     config.providerStatus.showReset !==
       DEFAULT_PROVIDER_STATUS_CONFIG.showReset ||
+    config.providerStatus.resetMinUsedPercent !==
+      DEFAULT_PROVIDER_STATUS_CONFIG.resetMinUsedPercent ||
     config.providerStatus.providers.join(",") !==
       DEFAULT_PROVIDER_STATUS_CONFIG.providers.join(",") ||
     Object.keys(config.providerStatus.customProviders).length > 0
@@ -782,6 +785,14 @@ function applyWidgetField(
   fieldId: string,
   newValue: string,
 ): void {
+  if (
+    widget.builtInId === "provider-status" &&
+    fieldId === "resetMinUsedPercent"
+  ) {
+    config.providerStatus.resetMinUsedPercent = Number(newValue);
+    return;
+  }
+
   updateWidgetOverride(config, widget, (override) => {
     switch (fieldId) {
       case "enabled":
@@ -855,7 +866,7 @@ function widgetSettingsItems(
 ): SettingItem[] {
   const override = getWidgetOverride(config, widget);
 
-  return [
+  const items: SettingItem[] = [
     {
       id: "enabled",
       label: "visibility",
@@ -907,6 +918,25 @@ function widgetSettingsItems(
       description: "Reserve at least this much width for the widget.",
     },
   ];
+
+  if (widget.builtInId === "provider-status") {
+    const values = new Set([
+      ...PROVIDER_STATUS_RESET_MIN_USED_PERCENT_OPTIONS,
+      config.providerStatus.resetMinUsedPercent,
+    ]);
+    items.push({
+      id: "resetMinUsedPercent",
+      label: "reset countdown threshold (%)",
+      currentValue: String(config.providerStatus.resetMinUsedPercent),
+      values: Array.from(values)
+        .sort((a, b) => a - b)
+        .map(String),
+      description:
+        "Show each reset countdown once its quota window reaches this used percentage. Applies to all provider windows.",
+    });
+  }
+
+  return items;
 }
 
 export function widgetSettingsSubmenu(
@@ -930,7 +960,7 @@ export function widgetSettingsSubmenu(
     );
     container.addChild(
       new Text(
-        theme.fg("dim", "Change this widget's layout and appearance"),
+        theme.fg("dim", "Change this widget's layout, appearance, and behavior"),
         1,
         0,
       ),
@@ -1033,7 +1063,7 @@ export function genericFooterSettingsItems(
       values: FOOTER_WIDGET_COLORS.map((color) =>
         colorSettingValue(theme, color),
       ),
-      description: "Choose the fill color for gauges below 60% remaining.",
+      description: "Choose the fill color for gauges above 40% used.",
     },
     {
       id: "gaugeColorError",
@@ -1042,7 +1072,7 @@ export function genericFooterSettingsItems(
       values: FOOTER_WIDGET_COLORS.map((color) =>
         colorSettingValue(theme, color),
       ),
-      description: "Choose the fill color for gauges below 25% remaining.",
+      description: "Choose the fill color for gauges above 75% used.",
     },
     {
       id: "defaultTextColor",

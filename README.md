@@ -37,8 +37,8 @@ pi install npm:pi-fancy-footer
 - Total session cost
 - Prompt-cache statistics: cumulative cache-read/write tokens and the latest
   turn's cache hit rate
-- Repo / path, branch, optional commit SHA (hidden by default), open PR
-  number, unresolved PR review threads, and PR CI status
+- Repo / path, branch, optional commit SHA (hidden by default), open or merged
+  PR number, auto-merge status, unresolved PR review threads, and PR CI status
 - Git diff stats and ahead/behind status
 - Footer statuses published by other extensions through Pi's `setStatus` API,
   including TPS meters and memory connection/activity indicators
@@ -69,7 +69,7 @@ pi install npm:pi-fancy-footer
     - `f` - toggle fill (`none` ↔ `grow`)
     - `x` or Space - toggle visibility
     - Enter - open widget-specific settings (visibility, icon, icon color,
-      text color, min width)
+      text color, min width, and the provider-status reset threshold)
   - arrow down past the widgets to reach the General settings (refresh,
     icon family, gauge style/width/colors, default colors, and declarative
     provider enablement/order); Enter/Space cycles values
@@ -103,7 +103,8 @@ Create `~/.pi/agent/fancy-footer.json`:
     "providers": ["openai-codex", "anthropic"],
     "display": "gauge",
     "showCredits": false,
-    "showReset": false
+    "showReset": "all",
+    "resetMinUsedPercent": 75
   },
   "widgets": {
     "context-bar": {
@@ -137,7 +138,12 @@ Top-level settings:
 
 > [!NOTE]
 > `fancy-footer.json` is validated strictly. Use only the documented keys and values.
-> Invalid config falls back to defaults and logs a warning.
+> Invalid configuration falls back to defaults and logs a warning.
+
+> [!WARNING]
+> `providerStatus.showReset` no longer accepts booleans. Before upgrading,
+> replace `true` with `"primary"` and `false` with `"off"`. An invalid value
+> causes the entire file to fall back to defaults.
 
 - `refreshMs` (number)
 - `iconFamily`
@@ -595,14 +601,16 @@ leading widget icon.
 Notes:
 
 - Most widgets use a leading icon.
-- `context-bar` renders a battery-style mini gauge of used context,
+- `context-bar` renders a mini gauge of used context,
   e.g. `■■□□□ 40%`, spanning `gaugeWidth` cells with the glyphs from
   `gaugeStyle` (not `iconFamily`). Filled cells and the percentage show the
-  consumed share, colored via `gaugeColors` by how close the context is to
-  exhaustion; empty cells stay dim. It sits on the left of the top row by
-  default, with provider quota gauges beside it. Set the widget's `fill` to
+  consumed share and fill up from the left, colored via `gaugeColors` by how
+  close the context is to exhaustion; empty cells stay dim. It sits on the
+  left of the top row by default, with provider quota gauges beside it. Set the widget's `fill` to
   `grow` (via `/fancy-footer` or the configuration file) to expand it into a
   full-width bar with the used tokens in front, e.g. `246k ██████████░░░`.
+  Immediately after compaction, the gauge resets to empty (`0%`) while Pi waits
+  for the next model response to report post-compaction usage.
 - `context-capacity` shows the total context window in compact SI form
   (`200k`, `1M`). It is hidden by default since the context bar already
   conveys usage; enable it via `/fancy-footer` (it starts in the `hidden`
@@ -619,6 +627,11 @@ Notes:
   the session has no cache activity or the terminal is narrower than 60
   columns.
 - `git-status` uses symbols for ahead / behind / diverged status.
+- `pull-request` keeps merged PRs visible. A non-default icon color override
+  always takes precedence. Otherwise, the PR icon uses a fixed GitHub purple
+  (`#8250df`, with a 256-color fallback) for merged PRs, the theme's dim color
+  for draft PRs, the accent color when auto-merge is enabled, and the configured
+  icon color for other open PRs. The purple is deliberately theme-independent.
 - `pull-request-ci-status` is icon-only and uses symbols for running / failed /
   okay status. By default it uses semantic colors (warning / error / success);
   set this widget's icon color to override them.
@@ -641,10 +654,19 @@ Notes:
   quota cache, and show that account's weekly window instead of the source
   provider's quota. Claude uses pi Anthropic OAuth credentials from
   `~/.pi/agent/auth.json` and reads Claude.ai usage for the 5-hour and weekly
-  windows. Status is cached under `~/.cache/pi-fancy-footer/provider-status/`;
+  windows. When Claude reports a limit that applies only to the active model,
+  such as the weekly Fable cap, that window replaces the account-wide window
+  with the same label instead of adding a gauge, so `7d` shows the quota that
+  actually limits the current model. The stricter of the two always wins,
+  because whichever runs out first ends the session, and the value follows
+  `/model` switches without another usage request.
+  Status is cached under `~/.cache/pi-fancy-footer/provider-status/`;
   when a refresh fails, cached quota windows keep showing until their reset times
-  pass instead of hiding the widget. The widget is hidden when the active model
-  selection is not backed by the status provider.
+  pass instead of hiding the widget. Once a window passes its reset time it stays
+  visible with unknown usage (`—`) until a refresh reports the new period, so a
+  quota rollover neither hides the gauge nor claims unconfirmed headroom. The
+  widget is hidden when the active model selection is not backed by the status
+  provider.
 - `provider-status` also refreshes from `x-codex-*` provider response headers
   when pi exposes them, avoiding a separate Codex status request after provider
   calls. Claude status refreshes from the Claude.ai usage endpoint, not
@@ -655,20 +677,23 @@ Notes:
   work better in terminals that don't use a Nerd Font.
 - Per-widget icon overrides only let you hide the icon. The selected
   `iconFamily` controls which icon each widget uses.
-- The PR widgets appear only for open GitHub and GitHub Enterprise pull
-  requests on GitHub-style hosts such as `github.example.com`; they rely on the
-  GitHub CLI (`gh`) being available and authenticated for the remote host.
+- The PR widgets appear only for open or merged pull requests on GitHub and
+  GitHub Enterprise hosts such as `github.example.com`. The footer also detects
+  auto-merge on open PRs. These widgets rely on the GitHub CLI (`gh`) being
+  available and authenticated for the remote host.
 - `pull-request-review-threads` counts unresolved GitHub review threads
   on the current PR.
-- `pull-request-ci-status` shows GitHub Actions workflow runs for the current
-  PR head commit. It links to the relevant run and switches to failed as soon as
-  one workflow fails, even when other workflows are still running.
+- `pull-request-ci-status` summarizes the checks that GitHub reports for the
+  current pull request. It links to a relevant check and shows failed when any
+  check fails, running when none fail but at least one is active, and okay
+  otherwise.
 
 ## 🧱 Gauge styles
 
 The `gaugeStyle` setting controls the characters used by the `context-bar`
-and `provider-status` gauges. Each style defines symbols for filled and empty
-cells:
+and `provider-status` gauges. All gauges fill from the left with what is
+already consumed, so a nearly full gauge means a nearly exhausted resource.
+Each style defines symbols for filled and empty cells:
 
 <!-- markdownlint-disable MD013 MD060 -->
 
@@ -684,12 +709,6 @@ cells:
 | `specks`           | `•`    | `◦`   |
 
 <!-- markdownlint-enable MD013 MD060 -->
-
-## 🧹 Uninstall
-
-```sh
-pi remove npm:pi-fancy-footer
-```
 
 ## 📄 License
 

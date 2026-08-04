@@ -84,6 +84,7 @@ test("collectPullRequestInfo ignores foreign branch-name matches and falls back 
                     {
                       number: 42,
                       url: "https://github.com/org/repo/pull/42",
+                      state: "OPEN",
                       headRepositoryOwner: { login: "someone-else" },
                     },
                   ],
@@ -116,6 +117,8 @@ test("collectPullRequestInfo ignores foreign branch-name matches and falls back 
         stdout: JSON.stringify({
           number: 7,
           url: "https://github.com/org/repo/pull/7",
+          state: "OPEN",
+          isDraft: true,
         }),
         stderr: "",
       };
@@ -129,25 +132,86 @@ test("collectPullRequestInfo ignores foreign branch-name matches and falls back 
   assert.deepEqual(result.pullRequest, {
     number: 7,
     url: "https://github.com/org/repo/pull/7",
+    state: "open",
+    isDraft: true,
     host: "github.com",
   });
   assert.equal(result.pullRequestLookupEnabled, true);
   assert.notEqual(result.pullRequestLookupAt, 0);
-  assert.equal(
-    calls.some(
-      (call) =>
-        call.command === "gh" &&
-        call.args[0] === "pr" &&
-        call.args[1] === "view",
-    ),
-    true,
+  const fallbackCall = calls.find(
+    (call) =>
+      call.command === "gh" &&
+      call.args[0] === "pr" &&
+      call.args[1] === "view",
   );
+  assert.ok(fallbackCall);
+  assert.match(fallbackCall.args.join(" "), /\bisDraft\b/);
   assert.equal(
     calls
       .filter((call) => call.command === "git")
       .every((call) => call.args[0] === "--no-optional-locks"),
     true,
   );
+});
+
+test("collectPullRequestInfo queries PR display status", async () => {
+  const { pi, calls } = createPi(({ command, args }) => {
+    if (command === "git" && gitSubcommand(args) === "rev-parse") {
+      return { code: 0, stdout: "origin/feature\n", stderr: "" };
+    }
+
+    if (command === "git" && gitSubcommand(args) === "config") {
+      return {
+        code: 0,
+        stdout: "remote.origin.url https://github.com/me/repo.git",
+        stderr: "",
+      };
+    }
+
+    if (command === "gh" && args[0] === "api") {
+      return {
+        code: 0,
+        stdout: JSON.stringify({
+          data: {
+            repository: {
+              open: { nodes: [] },
+              merged: {
+                nodes: [
+                  {
+                    number: 12,
+                    url: "https://github.com/me/repo/pull/12",
+                    state: "MERGED",
+                    headRepositoryOwner: { login: "me" },
+                  },
+                ],
+              },
+            },
+          },
+        }),
+        stderr: "",
+      };
+    }
+
+    throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
+  });
+
+  const result = await collectPullRequestInfo(pi as never, "/repo", "feature", {
+    includeReviewThreads: false,
+  });
+
+  assert.deepEqual(result.pullRequest, {
+    number: 12,
+    url: "https://github.com/me/repo/pull/12",
+    state: "merged",
+    host: "github.com",
+  });
+  const query = calls
+    .find((call) => call.command === "gh")
+    ?.args.find((arg) => arg.startsWith("query="));
+  assert.match(query ?? "", /open: pullRequests\(states: OPEN/);
+  assert.match(query ?? "", /merged: pullRequests\(states: MERGED/);
+  assert.equal(query?.match(/isDraft/g)?.length, 2);
+  assert.equal(query?.match(/autoMergeRequest \{ enabledAt \}/g)?.length, 2);
 });
 
 test("collectPullRequestInfo includes unresolved review thread count", async () => {
@@ -179,6 +243,7 @@ test("collectPullRequestInfo includes unresolved review thread count", async () 
                   {
                     number: 12,
                     url: "https://github.com/me/repo/pull/12",
+                    state: "OPEN",
                     headRepositoryOwner: { login: "me" },
                   },
                 ],
@@ -224,6 +289,7 @@ test("collectPullRequestInfo includes unresolved review thread count", async () 
   assert.deepEqual(result.pullRequest, {
     number: 12,
     url: "https://github.com/me/repo/pull/12",
+    state: "open",
     host: "github.com",
     unresolvedReviewThreadCount: 2,
   });
@@ -258,6 +324,7 @@ test("collectPullRequestInfo includes PR CI status when requested", async () => 
                   {
                     number: 12,
                     url: "https://github.com/me/repo/pull/12",
+                    state: "OPEN",
                     headRefOid: "abc123",
                     headRepositoryOwner: { login: "me" },
                   },
@@ -272,29 +339,28 @@ test("collectPullRequestInfo includes PR CI status when requested", async () => 
 
     if (
       command === "gh" &&
-      args[0] === "api" &&
-      args[1] === "--hostname" &&
-      args[2] === "github.com" &&
-      args[3] === "repos/me/repo/actions/runs?head_sha=abc123&per_page=100"
+      args[0] === "pr" &&
+      args[1] === "checks" &&
+      args[2] === "https://github.com/me/repo/pull/12" &&
+      args[3] === "--json" &&
+      args[4] === "bucket,link,startedAt,completedAt"
     ) {
       return {
         code: 0,
-        stdout: JSON.stringify({
-          workflow_runs: [
-            {
-              status: "in_progress",
-              conclusion: null,
-              html_url: "https://github.com/me/repo/actions/runs/1",
-              updated_at: "2026-01-01T10:00:00Z",
-            },
-            {
-              status: "completed",
-              conclusion: "failure",
-              html_url: "https://github.com/me/repo/actions/runs/2",
-              updated_at: "2026-01-01T09:00:00Z",
-            },
-          ],
-        }),
+        stdout: JSON.stringify([
+          {
+            bucket: "pending",
+            link: "https://github.com/me/repo/actions/runs/1/job/1",
+            startedAt: "2026-01-01T10:00:00Z",
+            completedAt: "",
+          },
+          {
+            bucket: "fail",
+            link: "https://github.com/me/repo/actions/runs/2/job/2",
+            startedAt: "2026-01-01T09:00:00Z",
+            completedAt: "2026-01-01T09:30:00Z",
+          },
+        ]),
         stderr: "",
       };
     }
@@ -310,11 +376,12 @@ test("collectPullRequestInfo includes PR CI status when requested", async () => 
   assert.deepEqual(result.pullRequest, {
     number: 12,
     url: "https://github.com/me/repo/pull/12",
+    state: "open",
     host: "github.com",
     headRefOid: "abc123",
     ciStatus: {
       state: "failed",
-      url: "https://github.com/me/repo/actions/runs/2",
+      url: "https://github.com/me/repo/actions/runs/2/job/2",
     },
   });
 });
@@ -351,6 +418,7 @@ test("collectPullRequestInfo uses the GitHub Enterprise host for API calls", asy
                   {
                     number: 12,
                     url: "https://github.example.com/me/repo/pull/12",
+                    state: "OPEN",
                     headRefOid: "abc123",
                     headRepositoryOwner: { login: "me" },
                   },
@@ -394,23 +462,22 @@ test("collectPullRequestInfo uses the GitHub Enterprise host for API calls", asy
 
     if (
       command === "gh" &&
-      args[0] === "api" &&
-      args[1] === "--hostname" &&
-      args[2] === "github.example.com" &&
-      args[3] === "repos/me/repo/actions/runs?head_sha=abc123&per_page=100"
+      args[0] === "pr" &&
+      args[1] === "checks" &&
+      args[2] === "https://github.example.com/me/repo/pull/12" &&
+      args[3] === "--json" &&
+      args[4] === "bucket,link,startedAt,completedAt"
     ) {
       return {
         code: 0,
-        stdout: JSON.stringify({
-          workflow_runs: [
-            {
-              status: "completed",
-              conclusion: "success",
-              html_url: "https://github.example.com/me/repo/actions/runs/1",
-              updated_at: "2026-01-01T10:00:00Z",
-            },
-          ],
-        }),
+        stdout: JSON.stringify([
+          {
+            bucket: "pass",
+            link: "https://github.example.com/me/repo/actions/runs/1/job/1",
+            startedAt: "2026-01-01T10:00:00Z",
+            completedAt: "2026-01-01T10:30:00Z",
+          },
+        ]),
         stderr: "",
       };
     }
@@ -425,12 +492,13 @@ test("collectPullRequestInfo uses the GitHub Enterprise host for API calls", asy
   assert.deepEqual(result.pullRequest, {
     number: 12,
     url: "https://github.example.com/me/repo/pull/12",
+    state: "open",
     host: "github.example.com",
     headRefOid: "abc123",
     unresolvedReviewThreadCount: 1,
     ciStatus: {
       state: "okay",
-      url: "https://github.example.com/me/repo/actions/runs/1",
+      url: "https://github.example.com/me/repo/actions/runs/1/job/1",
     },
   });
   assert.equal(
@@ -438,6 +506,15 @@ test("collectPullRequestInfo uses the GitHub Enterprise host for API calls", asy
       .filter((call) => call.command === "gh" && call.args[0] === "api")
       .every((call) => call.args.includes("github.example.com")),
     true,
+  );
+  assert.ok(
+    calls.some(
+      (call) =>
+        call.command === "gh" &&
+        call.args[0] === "pr" &&
+        call.args[1] === "checks" &&
+        call.args[2] === "https://github.example.com/me/repo/pull/12",
+    ),
   );
 });
 

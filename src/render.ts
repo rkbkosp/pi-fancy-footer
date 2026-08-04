@@ -16,6 +16,7 @@ import {
   type FooterIconFamily,
   type FooterMetrics,
   type FooterWidget,
+  type FooterWidgetResolvedIconColor,
   type FooterWidgetSize,
   type GitCounts,
   type GitInfo,
@@ -27,7 +28,6 @@ import {
   type ThinkingLevel,
   type WidgetRenderContext,
   type GaugeColorsSnapshot,
-  type GaugeFillMode,
   type GaugeStyleDef,
   buildGauge,
   gaugeColorFor,
@@ -54,23 +54,52 @@ import {
   formatProviderStatusReset,
   formatProviderStatusText,
   isProviderStatusRelevantToModel,
+  projectProviderStatusForModel,
   providerStatusColor,
   shouldShowProviderLabel,
 } from "./provider-status.ts";
+
+// GitHub Primer's default merged/done foreground color (#8250df). This hue is
+// fixed rather than theme-derived: pi themes have no "merged" role, and the
+// runtime exposes no light/dark background signal to pick between Primer's
+// light (#8250df) and dark (#a371f7) tokens. Users who want a different hue
+// override the pull-request widget's icon color, which takes precedence.
+export const GITHUB_MERGED_PURPLE = { red: 130, green: 80, blue: 223 } as const;
+// Closest xterm-256 cube entry to #8250df (index 98, #875fd7).
+export const GITHUB_MERGED_PURPLE_256 = 98;
+
+/** Foreground escape prefix for the fixed merged-PR purple. */
+export function githubMergedForegroundPrefix(
+  colorMode: ReturnType<Theme["getColorMode"]>,
+): string {
+  return colorMode === "256color"
+    ? `\x1b[38;5;${GITHUB_MERGED_PURPLE_256}m`
+    : `\x1b[38;2;${GITHUB_MERGED_PURPLE.red};${GITHUB_MERGED_PURPLE.green};${GITHUB_MERGED_PURPLE.blue}m`;
+}
+
+function styleFooterIcon(
+  theme: Theme,
+  color: FooterWidgetResolvedIconColor,
+  text: string,
+): string {
+  if (color !== "github-merged") return theme.fg(color, text);
+  return `${githubMergedForegroundPrefix(theme.getColorMode())}${text}\x1b[39m`;
+}
 
 function buildProviderStatusPart(
   snapshot: ProviderStatusSnapshot,
   config: Pick<
     ProviderStatusConfigSnapshot,
-    "display" | "showCredits" | "showReset"
+    "display" | "showCredits" | "showReset" | "resetMinUsedPercent"
   >,
   barStyle: GaugeStyleDef,
   gaugeWidth: number,
   gaugeColors: GaugeColorsSnapshot,
   theme: Theme,
   defaultTextColor: WidgetRenderContext["defaultTextColor"],
+  nowMs: number,
 ): string {
-  const text = formatProviderStatusText(snapshot, config);
+  const text = formatProviderStatusText(snapshot, config, nowMs);
   if (!text) return "";
 
   const gauge =
@@ -79,8 +108,8 @@ function buildProviderStatusPart(
       : [];
   let body: string;
   if (gauge.length > 0) {
-    const pieces = gauge.map(
-      (segment) =>
+    const pieces = gauge.map((segment) => {
+      let piece =
         theme.fg(defaultTextColor, `${segment.label} `) +
         theme.fg(
           gaugeColorFor(segment.color, gaugeColors),
@@ -157,22 +186,21 @@ export function collectSessionUsageMetrics(
   return getUsageData(ctx.sessionManager.getBranch());
 }
 
-function contextLeftPercent(totalTokens: number, usedTokens: number): number {
+function contextUsedPercent(totalTokens: number, usedTokens: number): number {
   const total = Math.max(1, Math.floor(totalTokens));
   const used = Math.max(0, Math.min(total, Math.floor(usedTokens)));
-  return ((total - used) / total) * 100;
+  return (used / total) * 100;
 }
 
 function renderGauge(
-  leftPercent: number,
+  usedPercent: number,
   style: GaugeStyleDef,
   cells: number,
-  mode: GaugeFillMode,
   colors: GaugeColorsSnapshot,
   theme: Theme,
   textColor: WidgetRenderContext["defaultTextColor"],
 ): string {
-  const gauge = buildGauge(leftPercent, style, cells, mode);
+  const gauge = buildGauge(usedPercent, style, cells);
   return (
     theme.fg(gaugeColorFor(gauge.color, colors), gauge.filledGlyphs) +
     theme.fg("dim", gauge.emptyGlyphs) +
@@ -183,7 +211,7 @@ function renderGauge(
 // Renders the context bar when it grows across the row: a used-tokens label
 // followed by a bar that fills the allocated width.
 function renderGrowGauge(
-  leftPercent: number,
+  usedPercent: number,
   usedTokens: number,
   style: GaugeStyleDef,
   availableWidth: number,
@@ -193,7 +221,7 @@ function renderGrowGauge(
 ): string {
   const label = `${formatTokens(usedTokens)} `;
   const cells = Math.max(1, Math.floor(availableWidth) - visibleWidth(label));
-  const gauge = buildGauge(leftPercent, style, cells, "used");
+  const gauge = buildGauge(usedPercent, style, cells);
   return (
     theme.fg(textColor, label) +
     theme.fg(gaugeColorFor(gauge.color, colors), gauge.filledGlyphs) +
@@ -335,7 +363,12 @@ function renderWidget(
 
   const styledIcon =
     hasIcon && widget.icon
-      ? renderCtx.theme.fg(widget.icon.color, iconText)
+      ? styleFooterIcon(
+          renderCtx.theme,
+          widget.resolveIconColor?.(renderCtx, widget.icon.color) ??
+            widget.icon.color,
+          iconText,
+        )
       : "";
 
   const combined = `${styledIcon}${styledText}`;
@@ -527,9 +560,12 @@ function computeFooterMetrics(
   const contextTokens = contextTokensKnown
     ? Math.max(0, Math.floor(contextTokensRaw))
     : 0;
+  const contextUsageUnknown =
+    contextUsage?.tokens === null || contextUsage?.percent === null;
 
-  const usedRaw = Number(contextUsage?.percent);
-  const hasUsedPercent = Number.isFinite(usedRaw) && usedRaw >= 0;
+  const usedRaw = contextUsage?.percent;
+  const hasUsedPercent =
+    typeof usedRaw === "number" && Number.isFinite(usedRaw) && usedRaw >= 0;
   const usedPct = Math.max(
     0,
     Math.min(
@@ -554,9 +590,17 @@ function computeFooterMetrics(
   const usageFromPercent = hasUsedPercent
     ? Math.floor((usedPct * totalTokens) / 100)
     : 0;
-  const usedTokensForBar = contextTokensKnown
-    ? contextTokens
-    : Math.max(usageFromPercent, usageFromLatest);
+  // Right after compaction, Pi deliberately reports null until the next model
+  // response supplies post-compaction usage. Empty the gauge instead of falling
+  // back to the latest assistant usage, which still describes the old context.
+  let usedTokensForBar: number;
+  if (contextUsageUnknown) {
+    usedTokensForBar = 0;
+  } else if (contextTokensKnown) {
+    usedTokensForBar = contextTokens;
+  } else {
+    usedTokensForBar = Math.max(usageFromPercent, usageFromLatest);
+  }
 
   const model = normalizeModel(ctx.model?.name || ctx.model?.id || "Claude");
   const thinking = formatThinkingLevel(
@@ -589,6 +633,10 @@ function computeFooterMetrics(
     commit: git.commit,
     pullRequestNumber: git.pullRequest?.number ?? 0,
     pullRequestUrl: git.pullRequest?.url ?? "",
+    pullRequestState: git.pullRequest?.state ?? "",
+    pullRequestIsDraft: git.pullRequest?.isDraft === true,
+    pullRequestAutoMergeEnabled:
+      git.pullRequest?.autoMergeEnabled === true,
     pullRequestUnresolvedReviewThreadCount:
       git.pullRequest?.unresolvedReviewThreadCount ?? 0,
     pullRequestCiState: git.pullRequest?.ciStatus?.state ?? "",
@@ -648,23 +696,22 @@ function buildFooterWidgets(
         { metrics, theme, gaugeWidth, gaugeColors, defaultTextColor },
         availableWidth,
       ) => {
-        const leftPercent = contextLeftPercent(
+        const usedPercent = contextUsedPercent(
           metrics.totalTokens,
           metrics.usedTokensForBar,
         );
         if (availableWidth === undefined) {
           return renderGauge(
-            leftPercent,
+            usedPercent,
             barStyle,
             gaugeWidth,
-            "used",
             gaugeColors,
             theme,
             defaultTextColor,
           );
         }
         return renderGrowGauge(
-          leftPercent,
+          usedPercent,
           metrics.usedTokensForBar,
           barStyle,
           availableWidth,
@@ -717,6 +764,13 @@ function buildFooterWidgets(
     },
     {
       ...baseWidgetDefaults("pull-request", iconFamily),
+      resolveIconColor: ({ metrics }, configuredColor) => {
+        if (configuredColor !== "text") return configuredColor;
+        if (metrics.pullRequestState === "merged") return "github-merged";
+        if (metrics.pullRequestIsDraft) return "dim";
+        if (metrics.pullRequestAutoMergeEnabled) return "accent";
+        return configuredColor;
+      },
       visible: ({ metrics }) => metrics.pullRequestNumber > 0,
       renderText: ({ metrics }) =>
         formatTerminalHyperlink(
@@ -754,10 +808,11 @@ function buildFooterWidgets(
     {
       ...baseWidgetDefaults("provider-status", iconFamily),
       styled: true,
-      visible: ({ providerStatuses, providerStatusConfig }) =>
+      visible: ({ providerStatuses, providerStatusConfig, nowMs }) =>
         providerStatuses.some(
           (snapshot) =>
-            formatProviderStatusText(snapshot, providerStatusConfig) !== "",
+            formatProviderStatusText(snapshot, providerStatusConfig, nowMs) !==
+            "",
         ),
       renderText: ({
         width,
@@ -767,6 +822,7 @@ function buildFooterWidgets(
         gaugeWidth,
         gaugeColors,
         defaultTextColor,
+        nowMs,
       }) => {
         const renderParts = (
           statuses: readonly ProviderStatusSnapshot[],
@@ -1071,11 +1127,17 @@ export function renderFooterLines(
     usageMetrics,
     footerConfig.iconFamily,
   );
-  const activeProviderStatuses = providerStatuses.filter((snapshot) =>
-    isProviderStatusRelevantToModel(snapshot.provider, ctx.model),
-  );
+  // Model-scoped quota windows resolve here rather than at fetch time: the
+  // cached snapshot stays model-agnostic, so switching models updates the
+  // footer without another usage request.
+  const activeProviderStatuses = providerStatuses
+    .filter((snapshot) =>
+      isProviderStatusRelevantToModel(snapshot.provider, ctx.model),
+    )
+    .map((snapshot) => projectProviderStatusForModel(snapshot, ctx.model));
   const renderCtx: WidgetRenderContext = {
     width,
+    nowMs,
     theme,
     ctx,
     gaugeWidth: footerConfig.gaugeWidth,

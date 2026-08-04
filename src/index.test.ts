@@ -42,6 +42,7 @@ test("the provider list subcommand reports registered sources", async () => {
 
 test("the data widget listener is removed during session shutdown", async () => {
   let stopCalls = 0;
+  let compact: (() => Promise<void>) | undefined;
   let shutdown: (() => Promise<void>) | undefined;
   const pi = {
     events: {
@@ -55,12 +56,17 @@ test("the data widget listener is removed during session shutdown", async () => 
     },
     registerCommand() {},
     on(event: string, handler: () => Promise<void>) {
+      if (event === "session_compact") compact = handler;
       if (event === "session_shutdown") shutdown = handler;
     },
   };
 
   fancyFooter(pi as never);
+  assert.ok(compact);
   assert.ok(shutdown);
+  assert.equal(stopCalls, 0);
+
+  await compact();
   assert.equal(stopCalls, 0);
 
   await shutdown();

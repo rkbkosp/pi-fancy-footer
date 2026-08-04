@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
+import { initTheme } from "@earendil-works/pi-coding-agent";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import {
+  buildConfigurableWidgets,
   footerConfigValidationErrors,
   genericFooterSettingsItems,
   moveCustomProviderToIndex,

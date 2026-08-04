@@ -7,10 +7,12 @@ import {
   buildProviderStatusGauge,
   collectProviderStatus,
   formatProviderStatusText,
+  formatResetCountdown,
   isProviderStatusRelevantToModel,
   normalizeClaudeUsageResponse,
   normalizeCodexUsageResponse,
   parseCodexRateLimitHeaders,
+  projectProviderStatusForModel,
   providerStatusColor,
   updateProviderStatusFromHeaders,
 } from "./provider-status.ts";
@@ -136,6 +138,253 @@ test("normalizeClaudeUsageResponse extracts five-hour and weekly usage windows",
   assert.equal(providerStatusColor(snapshot), "success");
 });
 
+test("normalizeClaudeUsageResponse collects model-scoped windows from limits", () => {
+  const weeklyReset = "2026-06-16T23:00:00.365483+00:00";
+  const snapshot = normalizeClaudeUsageResponse(
+    {
+      five_hour: { utilization: 6, resets_at: "2026-06-16T15:20:00Z" },
+      seven_day: { utilization: 57, resets_at: weeklyReset },
+      // The flat per-model keys stay null even while a scoped cap is in force.
+      seven_day_opus: null,
+      limits: [
+        { kind: "session", group: "session", percent: 6, scope: null },
+        { kind: "weekly_all", group: "weekly", percent: 57, scope: null },
+        {
+          kind: "weekly_scoped",
+          group: "weekly",
+          percent: 96,
+          resets_at: weeklyReset,
+          scope: { model: { id: null, display_name: "Fable" }, surface: null },
+        },
+        // Surface-scoped limits carry no model and cannot be matched.
+        {
+          kind: "weekly_scoped",
+          group: "weekly",
+          percent: 12,
+          scope: { model: null, surface: { display_name: "Cowork" } },
+        },
+      ],
+    },
+    now,
+  );
+
+  assert.deepEqual(snapshot?.scoped, [
+    {
+      label: "7d",
+      model: "Fable",
+      usedPercent: 96,
+      leftPercent: 4,
+      resetAt: Math.round(Date.parse(weeklyReset) / 1000),
+    },
+  ]);
+  // The account-wide windows stay untouched until a model is known.
+  assert.equal(snapshot?.secondary?.usedPercent, 57);
+  assert.equal(snapshot?.state, "warning");
+});
+
+test("normalizeClaudeUsageResponse prefers the active cap among duplicates for a model", () => {
+  const snapshot = normalizeClaudeUsageResponse(
+    {
+      five_hour: { utilization: 1, resets_at: "2026-06-16T15:20:00Z" },
+      seven_day: { utilization: 2, resets_at: "2026-06-16T23:00:00Z" },
+      limits: [
+        {
+          kind: "weekly_scoped",
+          group: "weekly",
+          percent: 90,
+          is_active: false,
+          scope: { model: { display_name: "Haiku" } },
+        },
+        {
+          kind: "weekly_scoped",
+          group: "weekly",
+          percent: 20,
+          is_active: true,
+          scope: { model: { display_name: "Haiku" } },
+        },
+      ],
+    },
+    now,
+  );
+
+  assert.equal(snapshot?.scoped?.length, 1);
+  assert.equal(snapshot?.scoped?.[0]?.usedPercent, 20);
+});
+
+test("normalizeClaudeUsageResponse falls back to account-wide limits entries", () => {
+  const sessionReset = "2026-06-16T15:20:00Z";
+  const weeklyReset = "2026-06-16T23:00:00Z";
+  const snapshot = normalizeClaudeUsageResponse(
+    {
+      // No flat five_hour/seven_day fields at all.
+      limits: [
+        {
+          kind: "session",
+          group: "session",
+          percent: 4,
+          resets_at: sessionReset,
+          scope: null,
+        },
+        {
+          kind: "weekly_all",
+          group: "weekly",
+          percent: 31,
+          resets_at: weeklyReset,
+          scope: null,
+        },
+        {
+          kind: "weekly_scoped",
+          group: "weekly",
+          percent: 77,
+          resets_at: weeklyReset,
+          scope: { model: { display_name: "Fable" } },
+        },
+        // Surface-scoped entries are neither account-wide nor model-scoped.
+        {
+          kind: "weekly_scoped",
+          group: "weekly",
+          percent: 99,
+          scope: { model: null, surface: { display_name: "Cowork" } },
+        },
+      ],
+    },
+    now,
+  );
+
+  assert.deepEqual(snapshot?.primary, {
+    label: "5h",
+    usedPercent: 4,
+    leftPercent: 96,
+    resetAt: Math.round(Date.parse(sessionReset) / 1000),
+  });
+  assert.deepEqual(snapshot?.secondary, {
+    label: "7d",
+    usedPercent: 31,
+    leftPercent: 69,
+    resetAt: Math.round(Date.parse(weeklyReset) / 1000),
+  });
+  assert.equal(snapshot?.scoped?.length, 1);
+  assert.equal(
+    projectProviderStatusForModel(snapshot!, { id: "claude-fable-5" }).secondary
+      ?.usedPercent,
+    77,
+  );
+});
+
+test("normalizeClaudeUsageResponse reports an empty scoped set when limits carry none", () => {
+  const withLimits = normalizeClaudeUsageResponse(
+    {
+      seven_day: { utilization: 2, resets_at: "2026-06-16T23:00:00Z" },
+      limits: [{ kind: "weekly_all", group: "weekly", percent: 2, scope: null }],
+    },
+    now,
+  );
+  // An empty array retires cached scoped caps; a missing key preserves them.
+  assert.deepEqual(withLimits?.scoped, []);
+
+  const withoutLimits = normalizeClaudeUsageResponse(
+    { seven_day: { utilization: 2, resets_at: "2026-06-16T23:00:00Z" } },
+    now,
+  );
+  assert.equal(withoutLimits?.scoped, undefined);
+});
+
+test("projectProviderStatusForModel swaps in the scoped window for the active model", () => {
+  const snapshot = {
+    provider: "anthropic",
+    source: "api" as const,
+    fetchedAt: now.toISOString(),
+    state: "ok" as const,
+    primary: { label: "5h", usedPercent: 6, leftPercent: 94 },
+    secondary: { label: "7d", usedPercent: 57, leftPercent: 43 },
+    scoped: [{ label: "7d", model: "Fable", usedPercent: 96, leftPercent: 4 }],
+  };
+
+  const fable = projectProviderStatusForModel(snapshot, {
+    id: "claude-fable-5",
+    provider: "anthropic",
+  });
+  assert.deepEqual(fable.secondary, {
+    label: "7d",
+    usedPercent: 96,
+    leftPercent: 4,
+  });
+  // Gauge count is unchanged: the scoped window takes over the weekly slot.
+  assert.deepEqual(fable.primary, snapshot.primary);
+  assert.equal(fable.state, "error");
+
+  const sonnet = projectProviderStatusForModel(snapshot, {
+    id: "claude-sonnet-4-5-20250929",
+    provider: "anthropic",
+  });
+  assert.deepEqual(sonnet.secondary, snapshot.secondary);
+  assert.equal(sonnet.state, snapshot.state);
+});
+
+test("projectProviderStatusForModel matches multi-token and prefixed model names", () => {
+  const snapshot = {
+    provider: "anthropic",
+    source: "api" as const,
+    fetchedAt: now.toISOString(),
+    state: "ok" as const,
+    secondary: { label: "7d", usedPercent: 10, leftPercent: 90 },
+    scoped: [
+      { label: "7d", model: "Opus 4.5", usedPercent: 80, leftPercent: 20 },
+      { label: "7d", model: "Fable", usedPercent: 96, leftPercent: 4 },
+    ],
+  };
+
+  assert.equal(
+    projectProviderStatusForModel(snapshot, "eu.anthropic.claude-fable-5")
+      .secondary?.usedPercent,
+    96,
+  );
+  assert.equal(
+    projectProviderStatusForModel(snapshot, {
+      id: "claude-opus-4-5-20251101",
+    }).secondary?.usedPercent,
+    80,
+  );
+  // Opus 4.1 must not inherit the Opus 4.5 cap.
+  assert.equal(
+    projectProviderStatusForModel(snapshot, { id: "claude-opus-4-1-20250805" })
+      .secondary?.usedPercent,
+    10,
+  );
+});
+
+test("projectProviderStatusForModel keeps the window with less headroom", () => {
+  const snapshot = {
+    provider: "anthropic",
+    source: "api" as const,
+    fetchedAt: now.toISOString(),
+    state: "error" as const,
+    secondary: { label: "7d", usedPercent: 92, leftPercent: 8 },
+    scoped: [{ label: "7d", model: "Fable", usedPercent: 20, leftPercent: 80 }],
+  };
+
+  // The account-wide weekly cap binds first, so it stays on screen.
+  assert.deepEqual(
+    projectProviderStatusForModel(snapshot, { id: "claude-fable-5" }).secondary,
+    snapshot.secondary,
+  );
+});
+
+test("projectProviderStatusForModel leaves snapshots without scoped windows alone", () => {
+  const snapshot = {
+    provider: "anthropic",
+    source: "api" as const,
+    fetchedAt: now.toISOString(),
+    state: "ok" as const,
+    secondary: { label: "7d", usedPercent: 57, leftPercent: 43 },
+  };
+
+  assert.equal(
+    projectProviderStatusForModel(snapshot, { id: "claude-fable-5" }),
+    snapshot,
+  );
+});
+
 test("normalizeClaudeUsageResponse ignores responses without supported windows", () => {
   assert.equal(
     normalizeClaudeUsageResponse(
@@ -209,29 +458,167 @@ test("formatProviderStatusText keeps default output provider-neutral", () => {
   assert.equal(
     formatProviderStatusText(snapshot, {
       showCredits: false,
-      showReset: false,
+      showReset: "off",
+      resetMinUsedPercent: 75,
     }),
-    "5h:95% 7d:97%",
+    "5h:5% 7d:3%",
   );
 });
 
-test("formatProviderStatusText supports optional credits and reset time", () => {
+test("formatResetCountdown truncates at unit boundaries", () => {
+  const nowMs = 1_800_000_000_000;
+  const resetAtAfter = (remainingMs: number) =>
+    (nowMs + remainingMs) / 1000;
+
+  assert.equal(formatResetCountdown(Number.NaN, nowMs), "");
+  assert.equal(formatResetCountdown(Number.POSITIVE_INFINITY, nowMs), "");
+  assert.equal(formatResetCountdown(resetAtAfter(60_000), Number.NaN), "");
+  assert.equal(formatResetCountdown(0, nowMs), "");
+  assert.equal(formatResetCountdown(nowMs / 1000, nowMs), "");
+  assert.equal(formatResetCountdown(resetAtAfter(1), nowMs), "~now");
+  assert.equal(formatResetCountdown(resetAtAfter(59_000), nowMs), "~now");
+  assert.equal(formatResetCountdown(resetAtAfter(60_000), nowMs), "~1m");
+  assert.equal(
+    formatResetCountdown(resetAtAfter(59 * 60_000 + 59_000), nowMs),
+    "~59m",
+  );
+  assert.equal(formatResetCountdown(resetAtAfter(60 * 60_000), nowMs), "~1h");
+  assert.equal(
+    formatResetCountdown(
+      resetAtAfter(4 * 60 * 60_000 + 32 * 60_000 + 59_000),
+      nowMs,
+    ),
+    "~4h32m",
+  );
+  assert.equal(
+    formatResetCountdown(resetAtAfter(24 * 60 * 60_000), nowMs),
+    "~1d",
+  );
+  assert.equal(
+    formatResetCountdown(
+      resetAtAfter(31 * 60 * 60_000 + 59 * 60_000),
+      nowMs,
+    ),
+    "~1d7h",
+  );
+});
+
+test("formatProviderStatusText places countdowns next to their windows", () => {
+  const nowMs = 1_800_000_000_000;
+  const snapshot = {
+    provider: "anthropic" as const,
+    source: "api" as const,
+    fetchedAt: new Date(nowMs).toISOString(),
+    state: "ok" as const,
+    primary: {
+      label: "5h",
+      usedPercent: 2,
+      leftPercent: 98,
+      resetAt: (nowMs + (4 * 60 + 32) * 60_000) / 1000,
+    },
+    secondary: {
+      label: "7d",
+      usedPercent: 97,
+      leftPercent: 3,
+      resetAt: (nowMs + (24 + 7) * 60 * 60_000) / 1000,
+    },
+    credits: "12",
+  };
+  const config = {
+    showCredits: true,
+    showReset: "all" as const,
+    resetMinUsedPercent: 0,
+  };
+
+  assert.equal(
+    formatProviderStatusText(
+      snapshot,
+      { ...config, showReset: "off" },
+      nowMs,
+    ),
+    "5h:2% 7d:97% cr:12",
+  );
+  assert.equal(
+    formatProviderStatusText(
+      snapshot,
+      { ...config, showReset: "primary" },
+      nowMs,
+    ),
+    "5h:2% ~4h32m 7d:97% cr:12",
+  );
+  assert.equal(
+    formatProviderStatusText(snapshot, config, nowMs),
+    "5h:2% ~4h32m 7d:97% ~1d7h cr:12",
+  );
+  assert.equal(
+    formatProviderStatusText(
+      {
+        ...snapshot,
+        primary: { ...snapshot.primary, resetAt: nowMs / 1000 },
+      },
+      { ...config, showReset: "primary" },
+      nowMs,
+    ),
+    "5h:2% 7d:97% cr:12",
+  );
+});
+
+test("formatProviderStatusText gates countdowns by displayed usage", () => {
+  const nowMs = 1_800_000_000_000;
+  const resetAt = (nowMs + 60 * 60_000) / 1000;
+  const text = (usedPercent: number, resetMinUsedPercent = 75) =>
+    formatProviderStatusText(
+      {
+        provider: "anthropic",
+        source: "api",
+        fetchedAt: new Date(nowMs).toISOString(),
+        state: "ok",
+        primary: {
+          label: "5h",
+          usedPercent,
+          leftPercent: 100 - usedPercent,
+          resetAt,
+        },
+      },
+      {
+        showCredits: false,
+        showReset: "all",
+        resetMinUsedPercent,
+      },
+      nowMs,
+    );
+
+  assert.equal(text(74.94), "5h:74.9%");
+  assert.equal(text(74.96), "5h:75% ~1h");
+  assert.equal(text(75), "5h:75% ~1h");
+  assert.equal(text(99.94, 100), "5h:99.9%");
+  assert.equal(text(99.96, 100), "5h:100% ~1h");
+});
+
+test("formatProviderStatusText treats unreported usage as below the threshold", () => {
+  const nowMs = 1_800_000_000_000;
   const snapshot = normalizeCodexUsageResponse(
     {
       rate_limit: {
-        primary_window: { used_percent: 50, reset_at: 1_778_064_000 },
+        primary_window: { reset_at: (nowMs + 60 * 60_000) / 1000 },
       },
-      credits: { balance: "12" },
     },
-    now,
+    new Date(nowMs),
   );
+  const config = {
+    showCredits: false,
+    showReset: "all" as const,
+    resetMinUsedPercent: 75,
+  };
 
-  assert.match(
-    formatProviderStatusText(snapshot, {
-      showCredits: true,
-      showReset: true,
-    }),
-    /^5h:50% reset:\d\d:\d\d cr:12$/,
+  assert.equal(formatProviderStatusText(snapshot, config, nowMs), "5h:0%");
+  assert.equal(
+    formatProviderStatusText(
+      snapshot,
+      { ...config, resetMinUsedPercent: 0 },
+      nowMs,
+    ),
+    "5h:0% ~1h",
   );
 });
 
@@ -246,7 +633,8 @@ test("formatProviderStatusText can show provider-specific credits without window
   assert.equal(
     formatProviderStatusText(snapshot, {
       showCredits: true,
-      showReset: false,
+      showReset: "off",
+      resetMinUsedPercent: 75,
     }),
     "cr:42",
   );
@@ -641,7 +1029,100 @@ test("collectProviderStatus retains a valid five-hour cache window after a parti
   assert.equal(snapshot?.error, undefined);
 });
 
-test("collectProviderStatus hides cached quota once its windows reset", async (t) => {
+test("collectProviderStatus retires a cached scoped cap that a refresh no longer reports", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-fancy-footer-test-"));
+  t.after(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const previousHome = process.env.HOME;
+  const previousXdgCacheHome = process.env.XDG_CACHE_HOME;
+  const previousFetch = globalThis.fetch;
+  process.env.HOME = dir;
+  process.env.XDG_CACHE_HOME = join(dir, "cache");
+  // A successful refresh that reports the account-wide windows only: the weekly
+  // Fable cap is gone.
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        five_hour: { utilization: 3, resets_at: "2030-01-01T01:00:00Z" },
+        seven_day: { utilization: 9, resets_at: "2030-01-02T01:00:00Z" },
+        limits: [
+          { kind: "session", group: "session", percent: 3, scope: null },
+          { kind: "weekly_all", group: "weekly", percent: 9, scope: null },
+        ],
+      }),
+    );
+  t.after(() => {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    if (previousXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
+    else process.env.XDG_CACHE_HOME = previousXdgCacheHome;
+    globalThis.fetch = previousFetch;
+  });
+
+  await mkdir(join(dir, ".pi", "agent"), { recursive: true });
+  await writeFile(
+    join(dir, ".pi", "agent", "auth.json"),
+    JSON.stringify({ anthropic: { access: "test-access-token" } }),
+    { mode: 0o600 },
+  );
+
+  const futureResetAt = Math.ceil(Date.now() / 1000) + 3_600;
+  const cacheDir = join(
+    process.env.XDG_CACHE_HOME,
+    "pi-fancy-footer",
+    "provider-status",
+  );
+  await mkdir(cacheDir, { recursive: true });
+  await writeFile(
+    join(cacheDir, "anthropic.json"),
+    JSON.stringify({
+      provider: "anthropic",
+      source: "api",
+      fetchedAt: "2026-05-06T09:00:00Z",
+      state: "error",
+      primary: {
+        label: "5h",
+        usedPercent: 5,
+        leftPercent: 95,
+        resetAt: futureResetAt,
+      },
+      secondary: {
+        label: "7d",
+        usedPercent: 12,
+        leftPercent: 88,
+        resetAt: futureResetAt,
+      },
+      scoped: [
+        {
+          label: "7d",
+          model: "Fable",
+          usedPercent: 96,
+          leftPercent: 4,
+          resetAt: futureResetAt,
+        },
+      ],
+      url: "https://claude.ai/settings/usage",
+    }),
+    { mode: 0o600 },
+  );
+
+  const snapshots = await collectProviderStatus({} as never, {
+    ...anthropicProviderStatusConfig,
+    cacheTtlMs: 1,
+  });
+
+  const snapshot = snapshots[0];
+  assert.equal(snapshot?.scoped, undefined);
+  assert.equal(
+    projectProviderStatusForModel(snapshot!, { id: "claude-fable-5" }).secondary
+      ?.usedPercent,
+    9,
+  );
+});
+
+test("collectProviderStatus marks rolled-over cached quota unknown", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "pi-fancy-footer-test-"));
   t.after(async () => {
     await rm(dir, { recursive: true, force: true });
@@ -1008,7 +1489,7 @@ test("updateProviderStatusFromHeaders does not merge expired cached windows", as
   assert.equal(providerStatusColor(snapshot), "dim");
 });
 
-test("buildProviderStatusGauge renders battery-style cells per window", () => {
+test("buildProviderStatusGauge fills cells with used quota per window", () => {
   const snapshot = normalizeCodexUsageResponse(
     {
       rate_limit: {
@@ -1029,17 +1510,21 @@ test("buildProviderStatusGauge renders battery-style cells per window", () => {
     {
       id: "5h",
       label: "5h",
-      filledGlyphs: "▰▰▰▰",
-      emptyGlyphs: "▱",
-      percentText: "80%",
+      role: "primary",
+      usedPercent: 20,
+      filledGlyphs: "▰",
+      emptyGlyphs: "▱▱▱▱",
+      percentText: "20%",
       color: "success",
     },
     {
       id: "7d",
       label: "7d",
-      filledGlyphs: "▰",
-      emptyGlyphs: "▱▱▱▱",
-      percentText: "10%",
+      role: "secondary",
+      usedPercent: 90,
+      filledGlyphs: "▰▰▰▰",
+      emptyGlyphs: "▱",
+      percentText: "90%",
       color: "error",
     },
   ]);
@@ -1049,7 +1534,7 @@ test("buildProviderStatusGauge keeps at least one cell visible near the edges", 
   const style = getGaugeStyle("parallelograms");
   const nearlyEmpty = buildProviderStatusGauge(
     normalizeCodexUsageResponse(
-      { rate_limit: { primary_window: { used_percent: 99 } } },
+      { rate_limit: { primary_window: { used_percent: 1 } } },
       now,
     ),
     style,
@@ -1059,7 +1544,7 @@ test("buildProviderStatusGauge keeps at least one cell visible near the edges", 
 
   const nearlyFull = buildProviderStatusGauge(
     normalizeCodexUsageResponse(
-      { rate_limit: { primary_window: { used_percent: 1 } } },
+      { rate_limit: { primary_window: { used_percent: 99 } } },
       now,
     ),
     style,

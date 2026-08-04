@@ -621,6 +621,10 @@ export default async function (pi: ExtensionAPI) {
     activeFooterControls?.refreshUsage();
   });
 
+  pi.on("session_compact", async () => {
+    activeFooterControls?.requestRender();
+  });
+
   pi.on("session_shutdown", async () => {
     if (registeredPricingProviderId) {
       pi.unregisterProvider(registeredPricingProviderId);

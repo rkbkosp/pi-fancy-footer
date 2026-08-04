@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { buildWorkflowRunsPath, selectPullRequestCiStatus } from "./ci.ts";
+import { selectPullRequestCiStatus } from "./ci.ts";
 import {
   createGitHubRepositoryContext,
   parseGitHubPullRequestUrl,
@@ -33,10 +33,24 @@ const GIT_NO_OPTIONAL_LOCKS_ARG = "--no-optional-locks";
 const PULL_REQUEST_QUERY = [
   "query($owner: String!, $name: String!, $branch: String!) {",
   "  repository(owner: $owner, name: $name) {",
-  "    pullRequests(states: OPEN, headRefName: $branch, first: 20, orderBy: { field: CREATED_AT, direction: DESC }) {",
+  "    open: pullRequests(states: OPEN, headRefName: $branch, first: 100, orderBy: { field: CREATED_AT, direction: DESC }) {",
   "      nodes {",
   "        number",
   "        url",
+  "        state",
+  "        isDraft",
+  "        autoMergeRequest { enabledAt }",
+  "        headRefOid",
+  "        headRepositoryOwner { login }",
+  "      }",
+  "    }",
+  "    merged: pullRequests(states: MERGED, headRefName: $branch, first: 100, orderBy: { field: CREATED_AT, direction: DESC }) {",
+  "      nodes {",
+  "        number",
+  "        url",
+  "        state",
+  "        isDraft",
+  "        autoMergeRequest { enabledAt }",
   "        headRefOid",
   "        headRepositoryOwner { login }",
   "      }",
@@ -157,7 +171,12 @@ async function collectCurrentBranchPullRequest(
   const result = await execResult(
     pi,
     "gh",
-    ["pr", "view", "--json", "number,url,headRefOid"],
+    [
+      "pr",
+      "view",
+      "--json",
+      "number,url,headRefOid,state,isDraft,autoMergeRequest",
+    ],
     cwd,
     GITHUB_COMMAND_TIMEOUT_MS,
   );
@@ -221,25 +240,22 @@ async function collectPullRequestCiStatus(
   cwd: string,
   pullRequest: NonNullable<GitInfo["pullRequest"]>,
 ): Promise<NonNullable<GitInfo["pullRequest"]>["ciStatus"] | undefined> {
-  const path = buildWorkflowRunsPath(
-    pullRequest.url,
-    pullRequest.headRefOid ?? "",
-  );
-  if (!path) return undefined;
-  const location = parseGitHubPullRequestUrl(pullRequest.url);
-  const host = pullRequest.host ?? location?.host;
-  if (!host) return undefined;
-
   const result = await execResult(
     pi,
     "gh",
-    ["api", "--hostname", host, path],
+    [
+      "pr",
+      "checks",
+      pullRequest.url,
+      "--json",
+      "bucket,link,startedAt,completedAt",
+    ],
     cwd,
     GITHUB_COMMAND_TIMEOUT_MS,
   );
-  if (result.code !== 0 || !result.stdout) return undefined;
+  if (!result.stdout) return undefined;
 
-  return selectPullRequestCiStatus(result.stdout);
+  return selectPullRequestCiStatus(result.stdout, pullRequest.url);
 }
 
 async function enrichPullRequest(

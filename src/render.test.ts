@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { renderFooterLines } from "./render.ts";
+import { githubMergedForegroundPrefix, renderFooterLines } from "./render.ts";
 import type { NormalizedFancyFooterDataWidget } from "./data-widgets.ts";
+import { parseCodexRateLimitHeaders } from "./provider-status.ts";
 import {
   DEFAULT_FOOTER_CONFIG,
   EMPTY_GIT_INFO,
@@ -13,7 +14,11 @@ import {
 
 const theme = {
   fg: (_color: string, text: string) => text,
+  getColorMode: () => "truecolor" as const,
 };
+
+const MERGED_TRUECOLOR = `${githubMergedForegroundPrefix("truecolor")}@\x1b[39m`;
+const MERGED_256COLOR = `${githubMergedForegroundPrefix("256color")}@\x1b[39m`;
 
 const usageMetrics: SessionUsageMetrics = {
   latest: undefined,
@@ -107,7 +112,11 @@ const agentWidgets: NormalizedFancyFooterDataWidget[] = [
 
 function contextWithModel(
   model: { id: string; name: string; provider?: string },
-  usage = { contextWindow: 200_000, tokens: 0, percent: 0 },
+  usage: {
+    contextWindow: number;
+    tokens: number | null;
+    percent: number | null;
+  } = { contextWindow: 200_000, tokens: 0, percent: 0 },
 ) {
   return {
     cwd: "/repo",
@@ -162,6 +171,7 @@ test("renderFooterLines renders max thinking with the default text color", () =>
       colors.push(`${color}:${text}`);
       return text;
     },
+    getColorMode: () => "truecolor" as const,
   };
 
   const lines = renderFooterLines(
@@ -190,6 +200,7 @@ test("data widgets honor default visibility and user color overrides", () => {
       colors.push(`${color}:${text}`);
       return text;
     },
+    getColorMode: () => "truecolor" as const,
   };
   const disabledLines = renderFooterLines(
     160,
@@ -275,7 +286,7 @@ test("renderFooterLines hides Codex provider status for non-OpenAI models", () =
     [providerStatus],
   );
 
-  assert.doesNotMatch(lines.join("\n"), /5h:95%/);
+  assert.doesNotMatch(lines.join("\n"), /5h:5%/);
 });
 
 test("renderFooterLines shows Codex provider status for OpenAI models", () => {
@@ -295,7 +306,7 @@ test("renderFooterLines shows Codex provider status for OpenAI models", () => {
     [providerStatus],
   );
 
-  assert.match(lines.join("\n"), /5h:95%/);
+  assert.match(lines.join("\n"), /5h:5%/);
 });
 
 test("renderFooterLines renders a weekly-only Codex quota gauge", () => {
@@ -339,8 +350,284 @@ test("renderFooterLines renders a weekly-only Codex quota gauge", () => {
     [weeklyOnlyProviderStatus],
   );
 
-  assert.match(lines.join("\n"), /%7d ▰▰▰▰▱ 84%/);
+  assert.match(lines.join("\n"), /%7d ▰▱▱▱▱ 16%/);
   assert.doesNotMatch(lines.join("\n"), /5h/);
+});
+
+test("renderFooterLines places reset countdowns beside matching gauges", () => {
+  const nowMs = Date.parse("2026-06-16T10:00:00Z");
+  const resetStatus: ProviderStatusSnapshot = {
+    ...claudeProviderStatus,
+    primary: {
+      ...claudeProviderStatus.primary!,
+      resetAt: (nowMs + (4 * 60 + 32) * 60_000) / 1000,
+    },
+    secondary: {
+      ...claudeProviderStatus.secondary!,
+      resetAt: (nowMs + (24 + 7) * 60 * 60_000) / 1000,
+    },
+  };
+  const gaugeConfig: FooterConfigSnapshot = {
+    ...footerConfig,
+    gaugeStyle: "parallelograms",
+    providerStatus: {
+      ...footerConfig.providerStatus,
+      display: "gauge",
+      resetMinUsedPercent: 0,
+    },
+  };
+  const ctx = contextWithModel({
+    provider: "anthropic",
+    id: "claude-sonnet-4",
+    name: "Claude Sonnet 4",
+  }) as never;
+  const render = (showReset?: "off" | "primary" | "all") =>
+    renderFooterLines(
+      160,
+      ctx,
+      EMPTY_GIT_INFO,
+      "off",
+      theme as never,
+      usageMetrics,
+      {
+        ...gaugeConfig,
+        providerStatus:
+          showReset === undefined
+            ? gaugeConfig.providerStatus
+            : { ...gaugeConfig.providerStatus, showReset },
+      },
+      [],
+      [resetStatus],
+      nowMs,
+    ).join("\n");
+
+  assert.match(
+    render("primary"),
+    /5h ▱▱▱▱▱ 0% ~4h32m 7d ▰▱▱▱▱ 8%(?! ~1d7h)/,
+  );
+  assert.match(
+    render(),
+    /5h ▱▱▱▱▱ 0% ~4h32m 7d ▰▱▱▱▱ 8% ~1d7h/,
+  );
+  assert.doesNotMatch(render("off"), /~(?:4h32m|1d7h)/);
+});
+
+test("renderFooterLines gates gauge countdowns by displayed usage", () => {
+  const nowMs = Date.parse("2026-06-16T10:00:00Z");
+  const status: ProviderStatusSnapshot = {
+    ...claudeProviderStatus,
+    primary: {
+      label: "5h",
+      usedPercent: 74.94,
+      leftPercent: 25.06,
+      resetAt: (nowMs + 60 * 60_000) / 1000,
+    },
+    secondary: {
+      label: "7d",
+      usedPercent: 80,
+      leftPercent: 20,
+      resetAt: (nowMs + 2 * 60 * 60_000) / 1000,
+    },
+  };
+  const lines = renderFooterLines(
+    160,
+    contextWithModel({
+      provider: "anthropic",
+      id: "claude-sonnet-4",
+      name: "Claude Sonnet 4",
+    }) as never,
+    EMPTY_GIT_INFO,
+    "off",
+    theme as never,
+    usageMetrics,
+    {
+      ...footerConfig,
+      gaugeStyle: "parallelograms",
+      providerStatus: { ...footerConfig.providerStatus, display: "gauge" },
+    },
+    [],
+    [status],
+    nowMs,
+  ).join("\n");
+
+  assert.doesNotMatch(lines, /74\.9% ~\S+/);
+  assert.match(lines, /80% ~2h/);
+});
+
+test("renderFooterLines renders gauge countdowns with the dim color", () => {
+  const nowMs = Date.parse("2026-06-16T10:00:00Z");
+  const colors: string[] = [];
+  const coloredTheme = {
+    fg: (color: string, text: string) => {
+      colors.push(`${color}:${text}`);
+      return text;
+    },
+    getColorMode: () => "truecolor" as const,
+  };
+  const status: ProviderStatusSnapshot = {
+    ...claudeProviderStatus,
+    primary: {
+      ...claudeProviderStatus.primary!,
+      resetAt: (nowMs + 2 * 60 * 60_000) / 1000,
+    },
+  };
+  renderFooterLines(
+    120,
+    contextWithModel({
+      provider: "anthropic",
+      id: "claude-sonnet-4",
+      name: "Claude Sonnet 4",
+    }) as never,
+    EMPTY_GIT_INFO,
+    "off",
+    coloredTheme as never,
+    usageMetrics,
+    {
+      ...footerConfig,
+      providerStatus: {
+        ...footerConfig.providerStatus,
+        display: "gauge",
+        resetMinUsedPercent: 0,
+      },
+    },
+    [],
+    [status],
+    nowMs,
+  );
+
+  assert.ok(colors.includes("dim: ~2h"));
+});
+
+test("renderFooterLines respects reset mode for secondary-only gauges", () => {
+  const nowMs = Date.parse("2026-06-16T10:00:00Z");
+  const secondaryOnly: ProviderStatusSnapshot = {
+    provider: "anthropic",
+    source: "api",
+    fetchedAt: new Date(nowMs).toISOString(),
+    state: "ok",
+    secondary: {
+      ...claudeProviderStatus.secondary!,
+      usedPercent: 90,
+      leftPercent: 10,
+      resetAt: (nowMs + 5 * 24 * 60 * 60_000) / 1000,
+    },
+  };
+  const ctx = contextWithModel({
+    provider: "anthropic",
+    id: "claude-sonnet-4",
+    name: "Claude Sonnet 4",
+  }) as never;
+  const render = (showReset: "primary" | "all") =>
+    renderFooterLines(
+      120,
+      ctx,
+      EMPTY_GIT_INFO,
+      "off",
+      theme as never,
+      usageMetrics,
+      {
+        ...footerConfig,
+        providerStatus: {
+          ...footerConfig.providerStatus,
+          display: "gauge",
+          showReset,
+          resetMinUsedPercent: 75,
+        },
+      },
+      [],
+      [secondaryOnly],
+      nowMs,
+    ).join("\n");
+
+  assert.doesNotMatch(render("primary"), /90% ~\S+/);
+  assert.match(render("all"), /7d .* 90% ~5d/);
+});
+
+test("renderFooterLines annotates a weekly-only Codex primary gauge", () => {
+  const nowMs = Date.parse("2026-06-16T10:00:00Z");
+  const weeklyOnly: ProviderStatusSnapshot = {
+    provider: "openai-codex",
+    source: "api",
+    fetchedAt: new Date(nowMs).toISOString(),
+    state: "ok",
+    primary: {
+      label: "7d",
+      leftPercent: 16,
+      usedPercent: 84,
+      resetAt: (nowMs + (5 * 24 + 4) * 60 * 60_000) / 1000,
+    },
+  };
+  const lines = renderFooterLines(
+    120,
+    contextWithModel({
+      provider: "openai",
+      id: "gpt-5-codex",
+      name: "GPT-5 Codex",
+    }) as never,
+    EMPTY_GIT_INFO,
+    "off",
+    theme as never,
+    usageMetrics,
+    {
+      ...footerConfig,
+      providerStatus: { ...footerConfig.providerStatus, display: "gauge" },
+    },
+    [],
+    [weeklyOnly],
+    nowMs,
+  );
+
+  assert.match(lines.join("\n"), /7d .* 84% ~5d4h/);
+  assert.doesNotMatch(lines.join("\n"), /5h/);
+});
+
+test("renderFooterLines matches header-derived countdowns to each window", () => {
+  const nowMs = Date.parse("2026-06-16T10:00:00Z");
+  const status = parseCodexRateLimitHeaders(
+    {
+      "x-codex-primary-used-percent": "20",
+      "x-codex-primary-window-minutes": "300",
+      "x-codex-primary-reset-at": String(nowMs / 1000 + 2 * 60 * 60),
+      "x-codex-secondary-used-percent": "40",
+      "x-codex-secondary-window-minutes": "10080",
+      "x-codex-secondary-reset-at": String(
+        nowMs / 1000 + (5 * 24 + 4) * 60 * 60,
+      ),
+    },
+    new Date(nowMs),
+  );
+  assert.ok(status);
+
+  const lines = renderFooterLines(
+    160,
+    contextWithModel({
+      provider: "openai",
+      id: "gpt-5-codex",
+      name: "GPT-5 Codex",
+    }) as never,
+    EMPTY_GIT_INFO,
+    "off",
+    theme as never,
+    usageMetrics,
+    {
+      ...footerConfig,
+      gaugeStyle: "parallelograms",
+      providerStatus: {
+        ...footerConfig.providerStatus,
+        display: "gauge",
+        showReset: "all",
+        resetMinUsedPercent: 0,
+      },
+    },
+    [],
+    [status],
+    nowMs,
+  );
+
+  assert.match(
+    lines.join("\n"),
+    /5h ▰▱▱▱▱ 20% ~2h 7d ▰▰▱▱▱ 40% ~5d4h/,
+  );
 });
 
 test("renderFooterLines shows Anthropic provider status for Claude models", () => {
@@ -360,7 +647,57 @@ test("renderFooterLines shows Anthropic provider status for Claude models", () =
     [claudeProviderStatus],
   );
 
-  assert.match(lines.join("\n"), /5h:100% 7d:92%/);
+  assert.match(lines.join("\n"), /5h:0% 7d:8%/);
+});
+
+test("renderFooterLines shows the model-scoped weekly window for the active model", () => {
+  const nowMs = Date.parse("2026-06-16T10:00:00Z");
+  const scopedProviderStatus: ProviderStatusSnapshot = {
+    ...claudeProviderStatus,
+    secondary: {
+      ...claudeProviderStatus.secondary!,
+      resetAt: (nowMs + 60 * 60_000) / 1000,
+    },
+    scoped: [
+      {
+        label: "7d",
+        model: "Fable",
+        leftPercent: 4,
+        usedPercent: 96,
+        resetAt: (nowMs + 2 * 60 * 60_000) / 1000,
+      },
+    ],
+  };
+  const render = (model: { id: string; name: string; provider?: string }) =>
+    renderFooterLines(
+      120,
+      contextWithModel(model) as never,
+      EMPTY_GIT_INFO,
+      "off",
+      theme as never,
+      usageMetrics,
+      footerConfig,
+      [],
+      [scopedProviderStatus],
+      nowMs,
+    ).join("\n");
+
+  assert.match(
+    render({
+      provider: "anthropic",
+      id: "claude-fable-5",
+      name: "Claude Fable 5",
+    }),
+    /5h:0% 7d:96% ~2h/,
+  );
+  assert.match(
+    render({
+      provider: "anthropic",
+      id: "claude-sonnet-4",
+      name: "Claude Sonnet 4",
+    }),
+    /5h:0% 7d:8%(?! ~\S+)/,
+  );
 });
 
 test("renderFooterLines reuses native gauges for declarative providers", () => {
@@ -471,7 +808,7 @@ test("renderFooterLines hides Anthropic provider status for OpenAI models", () =
     [claudeProviderStatus],
   );
 
-  assert.doesNotMatch(lines.join("\n"), /5h:100%/);
+  assert.doesNotMatch(lines.join("\n"), /5h:0%/);
 });
 
 const cacheUsageMetrics: SessionUsageMetrics = {
@@ -558,6 +895,153 @@ test("renderFooterLines hides the commit SHA unless enabled", () => {
   assert.match(shown.join("\n"), /#abc1234/);
 });
 
+test("renderFooterLines distinguishes draft, auto-merge, and merged PR icons", () => {
+  const colors: string[] = [];
+  const coloredTheme = {
+    fg: (color: string, text: string) => {
+      colors.push(`${color}:${text}`);
+      return text;
+    },
+    getColorMode: () => "truecolor" as const,
+  };
+  const ctx = contextWithModel({
+    provider: "openai",
+    id: "gpt-5-codex",
+    name: "GPT-5 Codex",
+  }) as never;
+  const pullRequest = {
+    number: 42,
+    url: "https://github.com/org/repo/pull/42",
+    state: "merged" as const,
+  };
+
+  const mergedLines = renderFooterLines(
+    120,
+    ctx,
+    { ...EMPTY_GIT_INFO, pullRequest },
+    "off",
+    coloredTheme as never,
+    usageMetrics,
+    footerConfig,
+  );
+  assert.ok(mergedLines.join("\n").includes(MERGED_TRUECOLOR));
+
+  colors.length = 0;
+  renderFooterLines(
+    120,
+    ctx,
+    {
+      ...EMPTY_GIT_INFO,
+      pullRequest: {
+        ...pullRequest,
+        state: "open",
+        isDraft: true,
+        autoMergeEnabled: true,
+      },
+    },
+    "off",
+    coloredTheme as never,
+    usageMetrics,
+    footerConfig,
+  );
+  assert.ok(colors.includes("dim:@"));
+  assert.equal(colors.includes("accent:@"), false);
+
+  colors.length = 0;
+  renderFooterLines(
+    120,
+    ctx,
+    {
+      ...EMPTY_GIT_INFO,
+      pullRequest: {
+        ...pullRequest,
+        state: "open",
+        isDraft: true,
+      },
+    },
+    "off",
+    coloredTheme as never,
+    usageMetrics,
+    {
+      ...footerConfig,
+      widgets: {
+        ...footerConfig.widgets,
+        "pull-request": { iconColor: "warning" },
+      },
+    },
+  );
+  assert.ok(colors.includes("warning:@"));
+  assert.equal(colors.includes("dim:@"), false);
+
+  colors.length = 0;
+  renderFooterLines(
+    120,
+    ctx,
+    {
+      ...EMPTY_GIT_INFO,
+      pullRequest: {
+        ...pullRequest,
+        state: "open",
+        autoMergeEnabled: true,
+      },
+    },
+    "off",
+    coloredTheme as never,
+    usageMetrics,
+    footerConfig,
+  );
+  assert.ok(colors.includes("accent:@"));
+
+  colors.length = 0;
+  renderFooterLines(
+    120,
+    ctx,
+    {
+      ...EMPTY_GIT_INFO,
+      pullRequest: { ...pullRequest, state: "open" },
+    },
+    "off",
+    coloredTheme as never,
+    usageMetrics,
+    footerConfig,
+  );
+  assert.ok(colors.includes("text:@"));
+
+  colors.length = 0;
+  const overriddenLines = renderFooterLines(
+    120,
+    ctx,
+    { ...EMPTY_GIT_INFO, pullRequest },
+    "off",
+    coloredTheme as never,
+    usageMetrics,
+    {
+      ...footerConfig,
+      widgets: {
+        ...footerConfig.widgets,
+        "pull-request": { iconColor: "warning" },
+      },
+    },
+  );
+  assert.ok(colors.includes("warning:@"));
+  assert.equal(overriddenLines.join("\n").includes(MERGED_TRUECOLOR), false);
+
+  const limitedColorTheme = {
+    ...coloredTheme,
+    getColorMode: () => "256color" as const,
+  };
+  const limitedColorLines = renderFooterLines(
+    120,
+    ctx,
+    { ...EMPTY_GIT_INFO, pullRequest },
+    "off",
+    limitedColorTheme as never,
+    usageMetrics,
+    footerConfig,
+  );
+  assert.ok(limitedColorLines.join("\n").includes(MERGED_256COLOR));
+});
+
 const contextBarUsage = { contextWindow: 200_000, tokens: 92_000, percent: 46 };
 
 function contextBarFooterConfig(
@@ -594,6 +1078,36 @@ test("renderFooterLines keeps the compact context gauge by default", () => {
     (row.match(/[█░]/g) ?? []).length,
     DEFAULT_FOOTER_CONFIG.gaugeWidth,
   );
+});
+
+test("renderFooterLines resets context usage while post-compaction usage is unknown", () => {
+  const preCompactionUsage: SessionUsageMetrics = {
+    latest: {
+      input: 268_476,
+      cacheRead: 0,
+      cacheWrite: 0,
+      cost: 0,
+    },
+    totalCost: 0,
+    totalCacheRead: 0,
+    totalCacheWrite: 0,
+  };
+  const lines = renderFooterLines(
+    120,
+    contextWithModel(
+      { provider: "anthropic", id: "claude-sonnet-4", name: "Claude Sonnet 4" },
+      { contextWindow: 400_000, tokens: null, percent: null },
+    ) as never,
+    EMPTY_GIT_INFO,
+    "off",
+    theme as never,
+    preCompactionUsage,
+    contextBarFooterConfig(undefined),
+  );
+
+  const row = lines[0] ?? "";
+  assert.match(row, /░{5} 0%/);
+  assert.doesNotMatch(row, /█/);
 });
 
 test("renderFooterLines grows the context bar across the row when configured", () => {
@@ -666,4 +1180,60 @@ test("renderFooterLines clamps a grown context bar at narrow widths", () => {
   const row = lines[0] ?? "";
   assert.ok(visibleWidth(row) <= 38);
   assert.match(row, /[█░]/);
+});
+
+test("renderFooterLines truncates countdown gauges ANSI-safely", () => {
+  const nowMs = Date.parse("2026-06-16T10:00:00Z");
+  const ansiTheme = {
+    fg: (_color: string, text: string) => `\x1b[2m${text}\x1b[0m`,
+    getColorMode: () => "truecolor" as const,
+  };
+  const status: ProviderStatusSnapshot = {
+    ...claudeProviderStatus,
+    primary: {
+      ...claudeProviderStatus.primary!,
+      resetAt: (nowMs + (4 * 60 + 32) * 60_000) / 1000,
+    },
+    secondary: {
+      ...claudeProviderStatus.secondary!,
+      resetAt: (nowMs + (24 + 7) * 60 * 60_000) / 1000,
+    },
+  };
+  const config: FooterConfigSnapshot = {
+    ...footerConfig,
+    gaugeStyle: "parallelograms",
+    providerStatus: {
+      ...footerConfig.providerStatus,
+      display: "gauge",
+      showReset: "all",
+      resetMinUsedPercent: 0,
+    },
+    widgets: {
+      ...footerConfig.widgets,
+      "context-bar": { enabled: true },
+    },
+  };
+
+  for (const width of [16, 24, 32, 40]) {
+    const lines = renderFooterLines(
+      width,
+      contextWithModel({
+        provider: "anthropic",
+        id: "claude-sonnet-4",
+        name: "Claude Sonnet 4",
+      }) as never,
+      EMPTY_GIT_INFO,
+      "off",
+      ansiTheme as never,
+      usageMetrics,
+      config,
+      [],
+      [status],
+      nowMs,
+    );
+    for (const line of lines) {
+      assert.ok(visibleWidth(line) <= width);
+      assert.equal(line.replace(/\x1b\[[0-9;]*m/g, "").includes("\x1b"), false);
+    }
+  }
 });

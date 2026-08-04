@@ -171,35 +171,37 @@ export function gaugeSeverity(leftPercent: number): GaugeSeverity {
   return "success";
 }
 
-export type GaugeFillMode = "remaining" | "used";
-
-// Mini gauge over a resource with `leftPercent` remaining. In "remaining"
-// mode (battery style) filled cells and the percent label show what is
-// left; in "used" mode they show consumption growing from the left.
-// Either way the color reflects how close the resource is to exhaustion,
-// and the gauge never reads completely full or empty unless it truly is.
+// Mini gauge over a resource with `usedPercent` consumed. Filled cells and
+// the percent label always grow from the left with consumption, while the
+// color reflects how close the resource is to exhaustion. The gauge never
+// reads completely full or empty unless it truly is.
 export function buildGauge(
-  leftPercent: number,
+  usedPercent: number,
   style: GaugeStyleDef,
   cells: number,
-  mode: GaugeFillMode = "remaining",
 ): GaugeSegment {
-  const left = Math.max(0, Math.min(100, leftPercent));
-  const shown = mode === "remaining" ? left : 100 - left;
+  const used = Math.max(0, Math.min(100, usedPercent));
   const n = Math.max(1, Math.floor(cells));
-  let filledCells = Math.round((shown / 100) * n);
-  if (shown > 0 && filledCells === 0) filledCells = 1;
-  if (shown < 100 && filledCells === n) filledCells = n - 1;
+  let filledCells = Math.round((used / 100) * n);
+  if (used > 0 && filledCells === 0) filledCells = 1;
+  if (used < 100 && filledCells === n) filledCells = n - 1;
   return {
     filledGlyphs: style.filled.repeat(filledCells),
     emptyGlyphs: style.empty.repeat(n - filledCells),
-    percentText: formatGaugePercent(shown),
-    color: gaugeSeverity(left),
+    percentText: formatGaugePercent(used),
+    color: gaugeSeverity(100 - used),
   };
 }
 
+export function displayedGaugePercent(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
 export function formatGaugePercent(value: number): string {
-  return Number.isInteger(value) ? `${value}%` : `${value.toFixed(1)}%`;
+  const displayed = displayedGaugePercent(value);
+  return Number.isInteger(displayed)
+    ? `${displayed}%`
+    : `${displayed.toFixed(1)}%`;
 }
 
 // Compact token counts with SI-style units: 246, 1.2k, 246k, 1M, 1.2M, 12M.
@@ -273,6 +275,7 @@ export interface GitCounts {
   behind: number;
 }
 
+export type PullRequestState = "open" | "merged";
 export type PullRequestCiState = "running" | "failed" | "okay";
 
 export type {
@@ -286,6 +289,9 @@ export type { ProviderStatusSnapshot };
 export interface GitHubPullRequest {
   number: number;
   url: string;
+  state: PullRequestState;
+  isDraft?: boolean;
+  autoMergeEnabled?: boolean;
   host?: string;
   headRefOid?: string;
   unresolvedReviewThreadCount?: number;
@@ -346,6 +352,9 @@ export const FOOTER_WIDGET_COLORS = [
 ] as const;
 
 export type FooterWidgetColor = (typeof FOOTER_WIDGET_COLORS)[number];
+export type FooterWidgetResolvedIconColor =
+  | FooterWidgetColor
+  | "github-merged";
 
 export const FOOTER_WIDGET_IDS = [
   "model",
@@ -413,6 +422,9 @@ export interface FooterMetrics {
   commit: string;
   pullRequestNumber: number;
   pullRequestUrl: string;
+  pullRequestState: PullRequestState | "";
+  pullRequestIsDraft: boolean;
+  pullRequestAutoMergeEnabled: boolean;
   pullRequestUnresolvedReviewThreadCount: number;
   pullRequestCiState: PullRequestCiState | "";
   pullRequestCiUrl: string;
@@ -424,6 +436,7 @@ export interface FooterMetrics {
 
 export interface WidgetRenderContext {
   width: number;
+  nowMs: number;
   theme: Theme;
   ctx: ExtensionContext;
   gaugeWidth: number;
@@ -432,7 +445,7 @@ export interface WidgetRenderContext {
   providerStatuses: readonly ProviderStatusSnapshot[];
   providerStatusConfig: Pick<
     ProviderStatusConfigSnapshot,
-    "display" | "showCredits" | "showReset"
+    "display" | "showCredits" | "showReset" | "resetMinUsedPercent"
   >;
   defaultIconColor: FooterWidgetColor;
   defaultTextColor: FooterWidgetColor;
@@ -450,6 +463,10 @@ export interface FooterWidget {
   minWidth?: FooterWidgetSize;
   icon?: FooterWidgetIcon;
   preferredIconColor?: FooterWidgetColor;
+  resolveIconColor?: (
+    ctx: WidgetRenderContext,
+    configuredColor: FooterWidgetColor,
+  ) => FooterWidgetResolvedIconColor;
   textColor?: FooterWidgetColor;
   preferredTextColor?: FooterWidgetColor;
   styled?: boolean;
@@ -509,6 +526,11 @@ export type ProviderStatusProviderId =
 export const PROVIDER_STATUS_DISPLAYS = ["gauge", "text"] as const;
 
 export type ProviderStatusDisplay = (typeof PROVIDER_STATUS_DISPLAYS)[number];
+
+export const PROVIDER_STATUS_RESET_MODES = ["off", "primary", "all"] as const;
+
+export type ProviderStatusResetMode =
+  (typeof PROVIDER_STATUS_RESET_MODES)[number];
 
 export interface ProviderStatusConfigSnapshot {
   refreshMs: number;
@@ -594,7 +616,7 @@ export const FOOTER_WIDGET_META: Record<
     shortLabel: "ctx-bar",
     defaults: { row: 0, position: 0, align: "left", fill: "none" },
     description:
-      "Shows a mini gauge of remaining context. Set fill to grow for a full-width bar.",
+      "Shows a mini gauge of used context. Set fill to grow for a full-width bar.",
     symbolKey: "contextBarMarker",
   },
   "total-cost": {
@@ -649,7 +671,7 @@ export const FOOTER_WIDGET_META: Record<
     shortLabel: "pr",
     defaults: { row: 1, position: 3, align: "left", fill: "none" },
     description:
-      "Shows the open GitHub pull request number for the current branch.",
+      "Shows the open or merged GitHub pull request number for the current branch.",
     symbolKey: "pullRequest",
   },
   "pull-request-review-threads": {
