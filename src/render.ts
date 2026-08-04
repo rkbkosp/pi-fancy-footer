@@ -116,8 +116,9 @@ function buildProviderStatusPart(
           segment.filledGlyphs,
         ) +
         theme.fg("dim", segment.emptyGlyphs) +
-        theme.fg(defaultTextColor, ` ${segment.percentText}`),
-    );
+        theme.fg(defaultTextColor, ` ${segment.percentText}`);
+      return piece;
+    });
     const extras: string[] = [];
     if (config.showReset && snapshot.windows[0]?.resetAt) {
       const reset = formatProviderStatusReset(snapshot.windows[0].resetAt);
