@@ -27,13 +27,13 @@ jobs:
         run: |
           set -euo pipefail
           git fetch origin main
-          git show origin/main:scripts/validate-sync-temp-v3.py > /tmp/validate-sync-temp-v3.py
-          python /tmp/validate-sync-temp-v3.py
+          git show origin/main:scripts/validate-sync-temp-v4.py > /tmp/validate-sync-temp-v4.py
+          python /tmp/validate-sync-temp-v4.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           if ! git diff --quiet; then
             git add src
-            git commit -m "fix: finalize upstream provider status compatibility"
+            git commit -m "fix: finish upstream provider status reconciliation"
             git push origin HEAD:sync-upstream-20260804
           fi
 
